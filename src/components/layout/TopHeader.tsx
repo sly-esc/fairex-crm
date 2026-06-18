@@ -175,7 +175,7 @@ export function TopHeader() {
                 <span className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-red-500 border-2 border-black shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
               )}
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-80 bg-zinc-950 border-white/10 text-zinc-200 shadow-2xl p-0" align="end" forceMount>
+          <DropdownMenuContent className="w-80 bg-zinc-950 border-white/10 text-zinc-200 shadow-2xl p-0" align="end">
             <div className="p-4 border-b border-white/10 font-medium text-white flex justify-between items-center">
               Notificaciones
               {hasUnread && (
@@ -242,7 +242,7 @@ export function TopHeader() {
                 </AvatarFallback>
               </Avatar>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56 bg-zinc-950 border-white/10 text-zinc-200 shadow-2xl" align="end" forceMount>
+          <DropdownMenuContent className="w-56 bg-zinc-950 border-white/10 text-zinc-200 shadow-2xl" align="end">
             <DropdownMenuLabel className="font-normal">
               <div className="flex flex-col space-y-1">
                 <p className="text-sm font-medium leading-none text-white">{user.name || 'Usuario'}</p>
