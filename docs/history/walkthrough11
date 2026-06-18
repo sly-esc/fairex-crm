@@ -1,0 +1,28 @@
+# Walkthrough: Cierre de la FASE 2.2
+
+La Fase 2.2 del proyecto FAIREX AI BUSINESS OS ha sido finalizada con éxito. A continuación se resumen los cambios clave realizados para concluir esta etapa sin afectar la arquitectura existente.
+
+## Cambios Implementados
+
+### 1. Refactorización del Dashboard (`src/app/(dashboard)/dashboard/page.tsx`)
+Se eliminaron los datos duros (mocks) del dashboard principal para que consuma exclusivamente los datos provenientes de Zustand (`pipelineLeads`), manteniendo intacta la regla de no realizar consultas directas a Supabase desde la UI.
+
+- **Briefing IA:** Ahora calcula dinámicamente la cantidad de "Nuevos Leads" (filtrando por la etapa 'Nuevo') y los leads listos para cierre (score mayor o igual a 90).
+- **Top Leads Calientes:** Se reemplazaron los tres leads estáticos. El sistema ahora filtra los leads activos, los ordena de mayor a menor según su `score`, y renderiza dinámicamente el Top 3. Los enlaces ahora apuntan correctamente a `/leads/${lead.id}`.
+
+### 2. Limpieza de Mocks (`src/lib/store.ts`)
+Para dejar el sistema completamente listo para la siguiente fase de desarrollo (creación de tablas reales de Alertas y Tareas):
+
+- `INITIAL_NOTIFICATIONS` ha sido vaciado (`[]`).
+- `INITIAL_TASKS` ha sido vaciado (`[]`).
+- Ahora, los módulos de Alertas y Tareas mostrarán correctamente sus respectivos componentes `EmptyState` ("Sin notificaciones" o "Sin tareas") en lugar de presentar datos inventados.
+
+## Lo que NO se modificó
+Cumpliendo estrictamente con las directrices de la arquitectura:
+- La gráfica financiera (`revenueData`) permanece inalterada a la espera de la integración de un módulo financiero.
+- No se crearon nuevas tablas en Supabase.
+- El archivo `queries.ts` y el `DataProvider.tsx` no fueron modificados.
+- El flujo oficial de datos (`Supabase ↓ queries.ts ↓ DataProvider ↓ Zustand ↓ UI`) sigue rigiendo la aplicación al 100%.
+
+> [!NOTE]
+> Con estos ajustes, todo el frontend de FAIREX está consumiendo datos en memoria inyectados por el Provider. El sistema está ahora totalmente saneado de los mocks iniciales y listo para abordar la Fase 3 (Login / Auth Real).

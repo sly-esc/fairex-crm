@@ -1,0 +1,58 @@
+# Implementación Lógica ACTIVO / EXCLUIR en lead_memory
+
+Este plan detalla los archivos y cambios exactos para implementar la funcionalidad de exclusión de leads (soft-delete) usando la columna `estado` en la tabla `lead_memory` de Supabase, respetando la directiva estricta de no borrar datos ni modificar otras estructuras.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Clarificación sobre la visibilidad en "Leads":**
+> Mencionaste que un lead en estado `EXCLUIR` debe desaparecer de *Conversaciones*, *Leads* y *Pipeline*. Sin embargo, también indicaste que en la sección **LEADS** se debe mostrar una columna visible con "🟢 ACTIVO / 🔴 EXCLUIDO" y tener el botón de "Activar lead". 
+> **Pregunta:** Si los leads excluidos desaparecen automáticamente de la tabla de Leads, no habrá forma de ver los "🔴 EXCLUIDO" para volver a activarlos. 
+> *¿Deseas que en la página de Leads exista un "Filtro" manual para mostrar los excluidos y así poder activarlos, o prefieres que la tabla de Leads SÍ muestre todos los registros (activos y excluidos) por defecto para facilitar la reactivación?*
+
+---
+
+## Archivos a Modificar y Cambios Específicos
+
+### 1. `src/lib/services/queries.ts` (o un nuevo archivo `actions.ts` para Supabase)
+- **Cambio:** Crear una función asíncrona `updateLeadEstado(id: string, estado: 'ACTIVO' | 'EXCLUIR')`.
+- **Detalle:** Esta función ejecutará un `UPDATE lead_memory SET estado = $2 WHERE id = $1` utilizando el cliente de Supabase existente. NO usará `service_role` ni modificará otras tablas.
+
+### 2. `src/lib/store.ts`
+- **Cambio:** Actualizar los tipos e interfaces del estado global (Zustand) que nutre actualmente el Frontend.
+- **Detalles:**
+  - Agregar la propiedad `estado: 'ACTIVO' | 'EXCLUIR'` a los tipos `Lead` y `Conversation`.
+  - Actualizar los datos falsos iniciales (`INITIAL_LEADS`, `INITIAL_CONVERSATIONS`) para que todos tengan `estado: 'ACTIVO'`.
+  - Crear una nueva acción en el store: `toggleLeadEstado(id: string, estado: 'ACTIVO' | 'EXCLUIR')` para actualizar instantáneamente la UI (Optimistic UI) al mismo tiempo que se dispara la llamada a Supabase.
+
+### 3. `src/app/(dashboard)/conversaciones/page.tsx`
+- **Cambios en UI (Menú de tres puntos):** 
+  - Agregar las opciones: "Ver ficha CRM", "Exportar conversación", "Marcar prioridad", "Excluir lead" (y "Activar lead" condicionalmente).
+- **Lógica de exclusión:** 
+  - Enlazar el botón "Excluir" a la acción de Supabase + Store.
+  - Filtrar la lista de la barra lateral para que `conversations.filter(c => c.estado === 'ACTIVO')`. Los leads excluidos desaparecerán del chat.
+
+### 4. `src/app/(dashboard)/leads/page.tsx`
+- **Cambios en UI (Tabla):**
+  - Agregar la nueva columna **"Estado"** junto a "Etapa" o "Score".
+  - Renderizar visualmente el estado usando un Badge: `🟢 ACTIVO` o `🔴 EXCLUIDO`.
+  - En el menú de acciones (`DropdownMenu` en los tres puntos de cada fila) agregar: "Ver ficha CRM", "Editar", "Excluir lead" / "Activar lead".
+- **Lógica de exclusión:**
+  - Aplicar el filtro según definamos en la "Clarificación" de arriba (por defecto filtrar los que sean `estado === 'ACTIVO'`, salvo que se active un filtro para ver todos).
+
+### 5. `src/app/(dashboard)/pipeline/page.tsx`
+- **Cambios en UI (Tarjetas del Kanban):**
+  - En el menú de tres puntos de la tarjeta, agregar: "Ver ficha CRM", "Cambiar etapa" (usando las columnas existentes), "Excluir lead".
+- **Lógica de exclusión:**
+  - Filtrar los leads que se pasan a las columnas: `filteredLeads.filter(l => l.estado === 'ACTIVO')`. Al presionar excluir, la tarjeta desaparecerá inmediatamente del pipeline.
+
+---
+
+## Plan de Verificación
+
+### Verificación Manual (Dashboard)
+- Cambiar el estado de un lead a EXCLUIR desde el **Pipeline** y verificar que desaparece de las columnas del kanban.
+- Ir a **Conversaciones** y confirmar que el chat ya no es visible en la lista de mensajes.
+- Ir a **Leads**, aplicar un filtro para ver excluidos (o según se decida) y observar la etiqueta `🔴 EXCLUIDO`.
+- Presionar "Activar lead" y confirmar que reaparece instantáneamente en Pipeline y Conversaciones.
+- Confirmar en la consola o dashboard de Supabase que el `UPDATE` a `lead_memory` se envía de forma correcta (solo lectura/escritura del campo `estado`).

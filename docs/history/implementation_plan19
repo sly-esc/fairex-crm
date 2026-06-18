@@ -1,0 +1,38 @@
+# Corrección del Bug de Logout (FASE 2.3.2)
+
+Se ha diagnosticado el bug reportado donde el usuario no puede cerrar sesión y permanece atrapado en el Dashboard.
+
+## Diagnóstico del Problema
+
+1. En el archivo `src/components/layout/TopHeader.tsx` (Líneas 261-267), el botón "Cerrar Sesión" ejecuta una función que muestra un Toast y usa un `setTimeout` para redirigir a `/login`.
+2. **Nunca se invoca a Supabase** para destruir la sesión real.
+3. Al ocurrir la redirección a `/login`, la cookie de Supabase sigue viva y válida en el navegador del usuario.
+4. El archivo `middleware.ts` (a través de `updateSession` en `src/lib/supabase/middleware.ts`) intercepta la petición a `/login`.
+5. Al comprobar que la cookie y la sesión siguen activas, el middleware asume que el usuario intenta entrar al login estando ya autenticado, por lo que lo **redirige de regreso a `/dashboard`**.
+
+## User Review Required
+
+El flujo propuesto mantendrá la arquitectura actual. Confirma si estás de acuerdo en importar el cliente de navegador (`createClient`) directo en el `TopHeader` y hacerlo asíncrono para cerrar sesión.
+
+## Proposed Changes
+
+### TopHeader
+
+Se importará el cliente de navegador de Supabase para poder destruir la cookie localmente antes de redirigir.
+
+#### [MODIFY] [TopHeader.tsx](file:///c:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/components/layout/TopHeader.tsx)
+
+**Cambios exactos:**
+1. Añadir el import: `import { createClient } from '@/lib/supabase/client'` al inicio del archivo.
+2. Hacer el manejador del `onClick` asíncrono.
+3. Instanciar el cliente: `const supabase = createClient()`.
+4. Ejecutar `await supabase.auth.signOut()`.
+5. Mantener la redirección `router.push('/login')` pero asegurando que se limpie la sesión en Supabase y refrescar para forzar al middleware a notar la eliminación de las cookies.
+
+## Verification Plan
+
+### Manual Verification
+- Iniciar sesión en el sistema FAIREX.
+- Hacer clic en el avatar -> "Cerrar Sesión".
+- Verificar que el navegador nos lleve exitosamente a la pantalla de Login y NO nos regrese al Dashboard de inmediato.
+- Verificar inspeccionando la pestaña Application (Storage) del navegador que las cookies de Supabase correspondientes hayan sido eliminadas.

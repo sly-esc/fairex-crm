@@ -1,0 +1,44 @@
+# Diagnóstico y Plan de Implementación (Cierre de FASE 2.2)
+
+Basado en la revisión profunda del historial, arquitectura y código fuente actual, aquí está el diagnóstico detallado del sistema. **La excelente noticia es que la Fase 2.2 ya fue iniciada y los puntos más complejos (Conversaciones y Perfil de Usuario) ya se encuentran desarrollados en el código base.**
+
+## 1. Módulos ya completamente migrados
+* ✅ **Conversaciones (`n8n_chat_histories`):** El archivo `conversaciones/page.tsx` ya fue refactorizado. Obtiene el historial real mediante `getChatHistory` ordenado cronológicamente.
+* ✅ **Panel Lead Memory (`lead_memory`):** El panel lateral derecho de Conversaciones ya consume los datos reales (score, prioridad, resumen, necesidades, objeciones) mediante la función `getLeadMemory`.
+* ✅ **Normalización de Etapas:** La función `normalizeStage` en `queries.ts` ya está implementada y convierte "contacto_inicial" (o variaciones) a "Nuevo" sin tocar la base de datos.
+* ✅ **Perfil Superior:** El componente `DataProvider.tsx` ya ejecuta `supabase.auth.getUser()`, obteniendo el nombre desde `user_metadata.name` (o del email como fallback) y el estado fluye correctamente hacia `TopHeader.tsx`.
+
+## 2. Archivos que siguen usando mocks
+1. **`src/app/(dashboard)/dashboard/page.tsx`:** 
+   * **Top Leads Calientes** (María González, Carlos Ruiz, Laura Martínez están hardcodeados).
+   * **Briefing IA** (El texto "14 nuevos leads" y "3 de ellos con score mayor a 90" es estático).
+   * **Proyección de Ingresos** (El array `revenueData` es estático).
+2. **`src/lib/store.ts`:**
+   * Las constantes `INITIAL_NOTIFICATIONS` e `INITIAL_TASKS` aún contienen objetos hardcodeados.
+
+## 3. Tablas de Supabase que utilizará cada sección
+* **Dashboard (Top Leads y Briefing IA):** No requiere consultas nuevas. Consumirá el array dinámico `pipelineLeads` proveniente del estado global de Zustand (el cual ya es alimentado por `lead_memory`).
+* **Alertas (`notifications`) y Tareas (`tasks`):** De acuerdo al `FAIREX_SYSTEM_BIBLE.md`, estas tablas aún no existen en la base de datos y están planificadas para fases posteriores. 
+
+## 4. Archivos que serán modificados
+1. **`src/app/(dashboard)/dashboard/page.tsx`:** Para derivar matemáticamente el texto del "Briefing IA" y la lista de "Top Leads Calientes" utilizando los datos reales de Zustand.
+2. **`src/lib/store.ts`:** Para vaciar los arrays iniciales `INITIAL_NOTIFICATIONS` e `INITIAL_TASKS`.
+
+## 5. Fallbacks temporales necesarios
+1. **Gráfica de Proyección de Ingresos:** Se mantendrá temporalmente con su mock actual, ya que no existe todavía un módulo financiero o tabla de cobros conectada.
+2. **Alertas y Tasks:** Al vaciar los datos iniciales en el store, estas secciones mostrarán temporalmente el componente `EmptyState` ("Sin notificaciones" / "Sin tareas") hasta que se implementen sus respectivas tablas en la base de datos. Esto es seguro y no rompe la UI.
+
+## 6. Orden recomendado para terminar la FASE 2.2
+Sugiero ejecutar los siguientes pasos para dar por cerrada esta fase:
+
+1. **Paso 1:** Refactorizar `dashboard/page.tsx` para eliminar los datos estáticos y conectar el Top Leads Calientes (limitado a los 3 mejores) y el Briefing IA directamente con los leads reales del pipeline en memoria.
+2. **Paso 2:** Modificar `src/lib/store.ts` para establecer `INITIAL_NOTIFICATIONS = []` e `INITIAL_TASKS = []`.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> El diagnóstico indica que tus puntos 1 (Historial), 2 (Lead Memory), 3 (Normalización) y parte del 4 (Perfil Superior) ya están implementados y funcionando en el código actual. **Solo nos falta limpiar los mocks del Dashboard, Notificaciones y Tasks.**
+>
+> ¿Estás de acuerdo con el plan propuesto para finalizar el Paso 1 y Paso 2? Si confirmas, procederé inmediatamente con los reemplazos en el Dashboard y Store.

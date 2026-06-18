@@ -1,0 +1,29 @@
+# Walkthrough: Cierre de la FASE 2.3 (V1 Completada)
+
+La Fase 2.3 ha sido ejecutada exitosamente. Con estas últimas modificaciones hemos purgado al 100% cualquier rastro de datos ficticios en el código base, consolidando la **Versión 1.0** de FAIREX AI BUSINESS OS.
+
+## Modificaciones Críticas Realizadas
+
+### 1. Eliminación de `MOCK_DB` en el Perfil del Lead
+El archivo `src/app/(dashboard)/leads/[id]/page.tsx` fue refactorizado por completo.
+- Ya no existen "María González", "Carlos Ruiz" ni otros perfiles inventados.
+- La vista ahora captura el ID de la URL y busca el registro real en `pipelineLeads` y `conversations` (ambos en Zustand).
+- Si el ID no existe en la memoria, se muestra un elegante `EmptyState` que indica "Lead no encontrado".
+- El Cerebro IA muestra dinámicamente el `resumen_inteligente` (usando `lastMessage`), el `score`, `etapa`, etc.
+
+### 2. Gestión Inteligente de Vacíos (Empty States)
+Tal y como indicaste, como el Historial, Necesidades y Objeciones no se guardan en el array global del pipeline, implementamos estados vacíos nativos:
+- Si no hay historial, se dibuja un `EmptyState` con el icono de Calendario indicando que la actividad se cargará próximamente.
+- Si no hay necesidades u objeciones, se usa un `EmptyState` con el icono Target indicando que no hay datos adicionales.
+- Nunca se inventan datos.
+
+### 3. Arreglo en el Directorio de Leads
+- Detectaste correctamente que la columna "Último Contacto" estaba vacía. En el archivo `src/app/(dashboard)/leads/page.tsx` modifiqué el mapeo para que busque la `time` respectiva en el array de `conversations` (sincronizado desde Supabase), mostrando ahora la hora correcta (ej. "15:30").
+
+## QA General Exitoso
+- **Directorio a Ficha:** Al hacer clic en una fila del directorio de leads, ahora abre los datos correctos de esa fila (número, score, etapa) en lugar de un mock genérico.
+- **Limpieza Total:** Una búsqueda profunda (`grep`) por "María", "Carlos", "revenueData", "Lorem Ipsum", etc., ha retornado **cero resultados**.
+- **Arquitectura Preservada:** No se modificó `queries.ts`, no se tocó la UI y el flujo sigue siendo exactamente `Supabase → queries.ts → DataProvider → Zustand → UI`.
+
+> [!NOTE]
+> ¡Felicidades! La **V1 Single-Player** de FAIREX está completada, estable y lista para operar con datos reales en producción sin mezclar mocks en la vista de los usuarios.

@@ -1,0 +1,44 @@
+# Diagnóstico FASE 2.3.1: Limpieza Final y Último Contacto
+
+He analizado los dos problemas que has detectado. Aquí está la explicación técnica y la solución propuesta para cada uno:
+
+## 1. Mocks "Fantasma" en Tasks y Notifications
+A nivel de código fuente (archivos `.tsx` y `store.ts`), los mocks de María González y Carlos Ruiz **ya no existen**. Una búsqueda profunda (`grep`) confirma que el código está completamente limpio.
+
+**¿Por qué sigues viéndolos en la pantalla?**
+Porque Zustand utiliza el middleware `persist` que guarda el estado en la memoria local de tu navegador (`localStorage`). Al haber ejecutado la aplicación cuando los mocks aún existían en versiones anteriores, tu navegador los guardó y los sigue cargando al hidratar la página.
+
+**Solución Propuesta:**
+Modificaré el archivo `src/lib/store.ts` para cambiar la clave de persistencia de Zustand de:
+`name: 'fairex-business-os-storage'`
+a:
+`name: 'fairex-v1-storage'`
+
+Esto forzará a tu navegador a crear un almacén completamente nuevo y limpio, eliminando para siempre las tareas y alertas fantasma de María González. Como resultado, ambas pantallas mostrarán automáticamente el `EmptyState` limpio y elegante ("Todo al día" y "No hay tareas en esta categoría") que ya está programado, sin usar datos inventados.
+
+## 2. Mejora de la Columna "Último Contacto"
+Solicitaste mostrar la fecha y hora completas utilizando la información proveniente de `conversations` (ej. `14/06/2026 · 09:46`), con la restricción estricta de **no modificar `queries.ts`**.
+
+**Limitación Detectada:**
+Actualmente, el backend de Supabase sí envía la fecha completa (`ultimo_contacto`), pero el archivo `queries.ts` la formatea inmediatamente descartando el día/mes y enviando a Zustand (y por ende a `conversations`) únicamente un string de texto con la hora:
+```typescript
+// Línea 79 de queries.ts
+const timeStr = dateObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+```
+
+Al no llegar la fecha al frontend (Zustand), es técnicamente imposible mostrar `14/06/2026` usando solo `conversations.time` sin inventar el dato (asumiendo que todo fue "hoy").
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Decisión sobre `queries.ts`:**
+> Para poder mostrar la fecha y hora reales como pides, necesito tu permiso explícito para hacer una **mínima modificación de 1 línea** en `src/lib/services/queries.ts`.
+> 
+> Cambiaría la línea 79 a:
+> `const timeStr = dateObj.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) + ' · ' + dateObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })`
+> 
+> Esto mantendría la arquitectura intacta y no añadiría ninguna consulta nueva, simplemente formatearía el string completo antes de enviarlo a Zustand.
+> 
+> **¿Apruebas el cambio de llave de LocalStorage y esta única línea en `queries.ts` para poder ejecutar la Fase 2.3.1?**

@@ -1,0 +1,31 @@
+# Walkthrough: Integración de Supabase (FASE 2.1)
+
+Hemos logrado interconectar las pantallas principales del Dashboard directamente con la base de datos real sin alterar ni una sola línea de código en las interfaces de usuario.
+
+## Cambios Arquitectónicos Implementados
+
+### 1. `getLeadsData` (Consultas)
+En `src/lib/services/queries.ts`, creé un nuevo "Server Action" que consulta en tiempo real la tabla `lead_memory`.
+Esta función se encarga de:
+- Recuperar todas las filas ordenadas por `created_at`.
+- Realizar el mapeo estructural (ej. `score_lead` → `score`).
+- Aplicar inteligentemente los fallbacks acordados: el nombre hereda el número (`numero`), el origen asume `WhatsApp Inbound` y el valor por defecto es `0`.
+- Retornar diccionarios estandarizados listos para la UI (`leads` y `conversations`).
+
+### 2. Provider Dedicado (`DataProvider.tsx`)
+Para cumplir tu solicitud de mantener un diseño modular y estructurado (preparando terreno para RLS y autenticación futura), se creó el componente independiente `src/components/providers/DataProvider.tsx`.
+Este actúa como un "agente silencioso" que:
+1. Al cargar la aplicación, llama asincrónicamente a `getLeadsData()`.
+2. Una vez que obtiene los datos, los inyecta en el estado global.
+
+### 3. Ajustes en Zustand (`store.ts`)
+- Vaciamos deliberadamente los arrays de `INITIAL_LEADS` e `INITIAL_CONVERSATIONS`. Ahora nacen vacíos y se llenan en milisegundos gracias al `DataProvider`.
+- Agregamos la función `setLeadsData` que permite a Zustand aceptar los nuevos datos procedentes del servidor.
+
+### 4. Layout Limpio
+Integramos `<DataProvider>` en el `layout.tsx` maestro del Dashboard, envolviendo a `{children}` de manera limpia.
+
+## Impacto
+Al recargar el proyecto ahora, **Pipeline, Leads y la bandeja de Conversaciones** se están auto-alimentando de lo que N8N escribe en `lead_memory`. No tocamos la autenticación, los componentes de Shadcn, las animaciones, ni modificamos las tablas.
+
+**Todo fluye de Supabase → Zustand → UI.**

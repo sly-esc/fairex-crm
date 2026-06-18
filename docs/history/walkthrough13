@@ -1,0 +1,22 @@
+# Walkthrough: Cierre Definitivo del Dashboard
+
+Se han completado todas las modificaciones necesarias para eliminar el 100% de los datos ficticios en el Dashboard principal de FAIREX AI BUSINESS OS, respetando rigurosamente la arquitectura `Supabase → queries.ts → DataProvider → Zustand → UI` y sin alterar el diseño existente.
+
+## Cambios Implementados
+
+### 1. Tarjetas Superiores (KPIs)
+Las cuatro tarjetas principales ahora calculan sus valores en tiempo real utilizando la memoria del store de Zustand:
+
+- **Conversaciones Totales:** Reemplaza a "Ventas Totales". Muestra la longitud total del arreglo de conversaciones en memoria (`conversations.length`).
+- **Leads Activos:** Calcula dinámicamente los leads en el pipeline descartando aquellos marcados como "EXCLUIR" (`activeLeads.length`).
+- **Conversaciones IA:** Calcula los leads activos que están siendo manejados por el agente virtual (`assignee === 'IA'`).
+- **Intervención Humana:** Calcula los leads activos que han sido asignados a un humano (`assignee !== 'IA'`). Muestra `0` de forma segura si todo es manejado por IA.
+
+### 2. Gráfica Principal
+- El título se actualizó de "Proyección de Ingresos" a **"Distribución de Leads"**.
+- Se eliminó el array `revenueData`.
+- En su lugar, se creó el array `distributionData` que agrupa dinámicamente a todos los leads activos basándose en la etapa actual de su pipeline (Nuevo, Interesado, Seguimiento, Negociación, Cerrado, Perdido).
+- La gráfica AreaChart conserva el 100% de los estilos y diseño original (curva verde `colorTotal`, tooltip, degradado), pero el eje X ahora representa las etapas del embudo en lugar de meses del año. El símbolo de dólar (`$`) fue retirado del eje Y.
+
+## Conclusión de la Fase
+Con esto, el Dashboard está completamente alimentado por datos reales y sincronizado con `lead_memory` a través de Zustand. El sistema está limpio de "mocks" y se encuentra estabilizado visual y arquitectónicamente.

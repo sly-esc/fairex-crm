@@ -1,0 +1,28 @@
+# FAIREX V1.0.1 — Official Freeze
+
+## Objetivo Cumplido
+Se ha completado la **FASE 2.4.1** declarando el congelamiento oficial de la versión V1.0.1. El código de la aplicación (UI, lógica de estado y base de datos) queda intacto y se han actualizado todos los documentos rectores del proyecto para reflejar este importante hito.
+
+## Resumen de Actualizaciones Documentales
+
+### 1. `PROJECT_STATUS.md`
+- **Estado Actualizado:** ✅ V1.0.1 PRODUCTION READY.
+- **Fase Actual:** FASE 2.4.1 completada.
+- **Bugs Corregidos:** Se añadió el registro de la solución del bug 9 (Bug de Logout y Bucle de Sesión), confirmando que el cierre de sesión mediante `supabase.auth.signOut()` fue implementado exitosamente nativo desde el cliente para evitar el rebote del middleware.
+
+### 2. `ARCHITECTURE.md`
+- **Versión de Arquitectura:** Cambiado a ✅ V1.0.1 Definitiva — Congelada para producción.
+- La arquitectura inmutable sigue siendo respetada: `Supabase → queries.ts → DataProvider → Zustand → UI`.
+
+### 3. `CHANGELOG.md`
+- **Nuevas Entradas:** Se añadieron explícitamente las fases recientes bajo el release **v1.0.1 — Official Freeze & Bugfix**:
+  - `FASE 2.4.1`: Congelamiento Final V1.0.1 (Sincronización documental).
+  - `FASE 2.3.2`: Corrección de Bug de Logout (Bucle de Sesión en TopHeader.tsx).
+
+### 4. `FAIREX_SYSTEM_BIBLE.md`
+- **Roadmap Actualizado:** Se marcaron como completadas las FASES 2.3.2 y 2.4.1.
+- **Estado Oficial del Proyecto:** Modificado a `✅ V1.0.1 PRODUCTION READY — FASE 2.4.1 COMPLETADA`.
+- Se reafirma que la siguiente acción de código a realizar, una vez que inicie el nuevo ciclo, será la **FASE 3 — Multiempresa**.
+
+## Estado del Repositorio
+Ningún archivo `.ts` o `.tsx` fue alterado. El sistema queda oficialmente congelado y listo para iniciar despliegues, demostraciones comerciales, y servir de cimiento limpio para la futura transición a Multi-tenant.

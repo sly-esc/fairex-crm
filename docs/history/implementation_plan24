@@ -1,0 +1,84 @@
+# Auditoría Arquitectónica: Escalabilidad RLS y Seguridad Zero Trust
+
+Has planteado dos preocupaciones fundamentales que separan un MVP de una arquitectura SaaS Enterprise madura. A continuación, presento la auditoría comparativa de ambos escenarios y la recomendación oficial.
+
+---
+
+## 1. Subconsulta Directa vs Función `SECURITY DEFINER`
+
+### El problema de la Subconsulta Directa (El enfoque anterior)
+```sql
+USING (company_id = (SELECT company_id FROM profiles WHERE id = auth.uid()))
+```
+**Riesgo de Rendimiento:** Aunque funcionalmente correcto, PostgreSQL evalúa esta política RLS *fila por fila*. Si un agente hace `SELECT * FROM lead_memory` y existen 10,000 leads, el motor podría ejecutar la subconsulta 10,000 veces.
+**Riesgo de Recursividad Oculta:** La tabla `profiles` ya tiene su propio RLS (`id = auth.uid()`). Al hacer un `SELECT` desde `lead_memory`, PostgreSQL primero invoca la política de `lead_memory`, que a su vez invoca a `profiles`, forzando al motor a evaluar el RLS de `profiles` en cada iteración. Esto degrada masivamente el rendimiento (latencia) a medida que la base de datos crece.
+
+### La solución Enterprise: `SECURITY DEFINER` + `STABLE`
+```sql
+CREATE OR REPLACE FUNCTION get_my_company_id()
+RETURNS bigint LANGUAGE sql SECURITY DEFINER SET search_path = public STABLE AS $$
+    SELECT company_id FROM profiles WHERE id = auth.uid();
+$$;
+```
+Y usarlo como: `USING (company_id = get_my_company_id())`
+
+**¿Por qué es infinitamente superior?**
+1. **Performance Cacheado (`STABLE`):** Al declararla como `STABLE`, PostgreSQL sabe que el resultado no cambiará durante toda la transacción. Calcula el `company_id` **una sola vez** en la primera fila y recicla el resultado para las 9,999 filas restantes.
+2. **Bypass Limpio (`SECURITY DEFINER`):** Al ejecutarse con privilegios del creador, la función accede a `profiles` saltándose el RLS de `profiles` temporalmente. Extrae el dato de manera quirúrgica y lo entrega a la política de `lead_memory`, previniendo cualquier posible "infinite recursion loop".
+
+---
+
+## 2. Inclusión de la tabla `companies`
+
+Si dejas `companies` sin RLS (acceso público), estás abriendo una brecha pasiva de Zero Trust. Un usuario autenticado con cualquier token podría hacer `SELECT * FROM companies` y extraer una lista completa de todos tus clientes (competidores entre sí). 
+
+En un modelo SaaS B2B, **nadie debe saber quién más está en la plataforma**.
+Al implementar `get_my_company_id()`, blindar `companies` es extremadamente trivial y altamente recomendado.
+
+```sql
+ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "companies_select_own" ON companies
+    FOR SELECT USING (id = get_my_company_id());
+```
+
+---
+
+## 3. El Nuevo Modelo de Políticas (Borrador Propuesto)
+
+Si apruebas esta arquitectura, el nuevo script final (`migration_phase_4_rls.sql`) tendrá este diseño:
+
+### Paso A: La Función Maestra
+```sql
+CREATE OR REPLACE FUNCTION get_my_company_id()
+RETURNS bigint
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+    SELECT company_id FROM profiles WHERE id = auth.uid();
+$$;
+```
+
+### Paso B: Habilitar RLS Universal
+```sql
+ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_memory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE n8n_chat_histories ENABLE ROW LEVEL SECURITY;
+```
+
+### Paso C: Políticas Optimizadas
+*   **`profiles`**: `USING (id = auth.uid())`
+*   **`companies`**: `USING (id = get_my_company_id())`
+*   **`lead_memory`**: `USING (company_id = get_my_company_id())`
+*   **`n8n_chat_histories`**: `USING (company_id = get_my_company_id())`
+
+> [!TIP]
+> **Recomendación de Arquitectura**
+> Como arquitecto, recomiendo **fuertemente** desechar la subconsulta directa y adoptar este modelo de `SECURITY DEFINER` + inclusión de `companies`. Es el estándar de oro en Supabase para aplicaciones SaaS escalables. Evitará bloqueos en la base de datos cuando pases de 1,000 a 100,000 registros históricos.
+
+> [!CAUTION]
+> **Revisión del Usuario Requerida**
+> ¿Apruebas este enfoque? Si me confirmas la adopción de `get_my_company_id()` y la protección de la tabla `companies`, actualizaré el archivo `migration_phase_4_rls.sql` para reflejar este nuevo y robusto diseño.

@@ -1,0 +1,40 @@
+# Goal Description
+El objetivo es resolver los últimos cabos sueltos de UX interactiva antes de la Fase 2: persistencia de Pipeline mediante Zustand/LocalStorage, creación funcional (mock) de Tareas con búsqueda, validación de branding dinámico en toda la app, ajustes informativos en Configuración (Integraciones e IA), y resolución del error de carga en Pipeline provocado por animaciones.
+
+## User Review Required
+> [!IMPORTANT]
+> - **Branding Dinámico**: Se usará el Color Primario definido en *Configuración* para reescribir dinámicamente la variable `--primary` de Tailwind mediante CSS inyectado, afectando a botones, badges y focos.
+> - **Pipeline Persistente**: Utilizaremos `persist` de Zustand para que los Leads y sus etapas vivan en LocalStorage. Esto mantendrá los drag-and-drops intactos incluso al recargar la página.
+
+## Proposed Changes
+
+### Store Global (`src/lib/store.ts`)
+- **Añadir Estado de Branding**: Incluir `primaryColor` (Hex) y `logoUrl`, con sus funciones de actualización.
+- **Añadir Estado de Pipeline**: Migrar `INITIAL_LEADS` al store como `pipelineLeads` junto a una función `updateLeadStage(leadId, stage)`.
+- **Implementar Persistencia**: Envolver el store con la capa `persist` de Zustand para que todo (conversaciones, notificaciones, branding y pipeline) se guarde en `localStorage`.
+
+### Módulo Pipeline (`src/app/(dashboard)/pipeline/page.tsx`)
+- **Conexión al Store**: Reemplazar el estado local `leads` por el estado global `pipelineLeads`.
+- **Búsqueda**: Implementar el filtrado de tarjetas basado en el `Input` de búsqueda de oportunidad.
+- **Estabilidad (Crash Fix)**: El error "This page couldn't load" se debe probablemente a colisiones de `layout` en Framer Motion durante re-renderizados sin montar. Añadiremos validación de hidratación (isMounted) y garantizaremos claves (`layoutId`) únicas.
+
+### Módulo Tareas (`src/app/(dashboard)/tasks/page.tsx`)
+- **Búsqueda Funcional**: Conectar la barra de búsqueda al filtrado de la lista.
+- **Creación de Tarea Mock**: Implementar un pequeño Modal/Dialog que aparezca al dar clic en "Nueva Tarea" permitiendo añadir una tarea ficticia a la lista local.
+
+### Módulo Configuración (`src/app/(dashboard)/settings/page.tsx`)
+- **Branding**: Conectar los inputs de *Color Primario* y *Logo URL* al store global.
+- **Cerebro IA**: Agregar badgets o textos de disclaimer "(Solo UI - MVP)" en los controles para gestionar expectativas del cliente.
+- **Integraciones**: Deshabilitar los `<Switch>` (modo `disabled`) añadiendo un mensaje de "🔒 Reservado para administración interna".
+
+### Layout Principal (`src/app/(dashboard)/layout.tsx` / `TopHeader.tsx`)
+- **Inyección de Tema**: Leer `primaryColor` del store global e inyectar un `<style>` que sobrescriba `--primary` dinámicamente en el documento.
+
+### Auditoría Final
+- Actualización del documento `fairex_ux_audit_walkthrough.md` contabilizando el total de botones y categorizando su estado.
+
+## Verification Plan
+- **Prueba Pipeline**: Arrastrar una oportunidad, navegar a Dashboard y volver a Pipeline para confirmar que conserva su columna. Recargar la página y validar. Buscar "María" y verificar que desaparezcan las demás tarjetas.
+- **Prueba Branding**: Cambiar el color hex en Ajustes y verificar que los botones de la plataforma cambian de color instantáneamente.
+- **Prueba Tareas**: Buscar y crear una nueva tarea.
+- **Prueba Integraciones**: Validar que los Toggles no pueden clickearse y muestran un candado/mensaje.

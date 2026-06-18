@@ -1,0 +1,43 @@
+# Plan de QA y Limpieza Final V1 (Fase 2.3)
+
+He realizado un análisis exhaustivo del código base buscando cualquier rastro de datos ficticios. Aquí tienes el diagnóstico solicitado antes de tocar una sola línea de código.
+
+## 1. Archivos que serán modificados
+1. **`src/app/(dashboard)/leads/[id]/page.tsx`**: Es el archivo principal que requiere intervención. Eliminaré por completo la constante `MOCK_DB` y enlazaré la vista con `pipelineLeads` desde el store.
+2. **`src/app/(dashboard)/tasks/page.tsx`**: Actualizaré la vista para utilizar el componente elegante `EmptyState` en lugar de texto plano cuando no haya tareas reales.
+3. *Nota:* `notifications/page.tsx` ya utiliza un `EmptyState` impecable ("Todo al día") cuando el array está vacío.
+
+## 2. Mocks restantes identificados
+El escáner detectó que **el único lugar** donde sobreviven nombres como "María González", "Carlos Ruiz", "Ana Silva", resúmenes falsos e historiales ficticios es dentro de la constante `MOCK_DB` en la página de Perfil de Lead (`leads/[id]/page.tsx`). 
+
+*(Las variables `INITIAL_NOTIFICATIONS` e `INITIAL_TASKS` ya fueron vaciadas a `[]` en la fase anterior y ya no contienen datos ficticios).*
+
+## 3. Componentes completamente terminados y estables
+El QA General confirma que la V1 tiene las siguientes características listas y operativas bajo tu arquitectura estricta:
+✅ **Autenticación:** Login, Logout y TopHeader (obteniendo nombre de `user_metadata`).
+✅ **Dashboard:** Gráficas, Briefing y Top Leads derivados de la memoria real.
+✅ **Gestión de Leads:** Pipeline con Drag & Drop, Búsquedas, Filtros, Excluir/Reactivar.
+✅ **Conversaciones:** Conexión real con `n8n_chat_histories`.
+✅ **UI/UX:** Responsive, Sidebar, Modo oscuro nativo, estilos Tailwind v4.
+
+## 4. Fallbacks temporales que seguirán existiendo
+Para cumplir tu regla de **"no tocar queries.ts ni hacer nuevas consultas a Supabase"**, tendremos los siguientes fallbacks en la vista del Perfil del Lead (`leads/[id]/page.tsx`):
+- **Cerebro IA (Resumen, Necesidades, Objeciones):** Como el tipo `Lead` inyectado en Zustand actualmente solo tiene `{ id, name, company, score, stage, assignee, etc }`, estas secciones detalladas no tendrán datos. Las ocultaremos o mostraremos un mensaje elegante de "Buscando datos..." o "Sin datos procesados".
+- **Historial de Actividad del Lead:** Mostrará un `EmptyState` o simplemente la fecha de entrada, ya que no tenemos el historial detallado del lead cargado en memoria global.
+- **Alertas y Tareas:** Seguirán mostrando sus respectivos `EmptyState` hasta que las conectes a Supabase en fases posteriores (aunque el usuario ya puede crear tareas manualmente que persisten en su localStorage local).
+
+## 5. Preparación de la V1 para Producción
+La **V1 está a un paso de la línea de meta**. Una vez implementemos este plan y eliminemos el `MOCK_DB` del perfil del lead:
+* FAIREX será un CRM 100% funcional para operaciones "Single-Player" (un solo inquilino/empresa) usando Supabase.
+* Será completamente seguro probarlo con leads reales entrantes porque no habrá datos contaminados cruzándose en la interfaz.
+* Funcionalidades como Multiempresa (Tenants), Roles (Admins vs Agents), RLS (Row Level Security) y Realtime nativo quedan perfectamente encapsuladas para una V2.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Sobre el Perfil del Lead (`leads/[id]/page.tsx`):**
+> Dado que la memoria (`pipelineLeads`) no tiene el "Historial de Actividad" ni las "Necesidades/Objeciones" del lead, ¿estás de acuerdo en que **oculte esas subsecciones** temporalmente o prefieres que muestre un **EmptyState** dentro de esas tarjetas indicando que aún no hay datos?
+> 
+> Una vez respondas a esta duda, procederé a destruir los mocks y finalizar la V1.

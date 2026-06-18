@@ -1,0 +1,57 @@
+# Diseño Arquitectónico: FASE 3 — Multiempresa (Multi-Tenant SaaS)
+
+## Objetivo
+Evolucionar la arquitectura de FAIREX V1.0.1 (Single-Player) hacia un modelo Multi-Tenant robusto, permitiendo alojar múltiples clientes bajo la misma base de datos, manteniendo un aislamiento estricto y sin romper los flujos existentes de N8N.
+
+## User Review Required
+
+> [!CAUTION]
+> **Compatibilidad con n8n**
+> Para garantizar que el flujo actual de N8N no se rompa, propongo agregar la nueva columna `company_id` con un valor `DEFAULT 1`. De esta manera, el N8N actual seguirá inyectando los leads a la empresa pionera, sin necesidad de reprogramar los webhooks inmediatamente. ¿Estás de acuerdo con este enfoque?
+
+> [!IMPORTANT]
+> **Aislamiento en `queries.ts` (Server Actions)**
+> Para máxima seguridad, propongo que `queries.ts` no confíe en el cliente (Dashboard) para saber cuál es el `company_id`. En su lugar, cada Server Action leerá la cookie de sesión nativa, consultará a qué `company_id` pertenece ese `auth.uid()`, y filtrará las consultas a `lead_memory`. De este modo es imposible que un cliente vea los leads de otro.
+
+## Proposed Changes
+
+### 1. Migración Aditiva de Base de Datos (Supabase)
+Se ejecutarán los siguientes comandos SQL (no destructivos) en Supabase:
+
+- **Nueva tabla `companies`:**
+  Tabla maestra de inquilinos.
+  Columnas: `id` (int8, PK), `name` (text), `created_at` (timestamptz).
+  *Acción inicial: Crear el registro `id=1` con nombre "FAIREX Original".*
+
+- **Nueva tabla `users` (Perfiles públicos):**
+  Para vincular la autenticación de Supabase con una empresa.
+  Columnas: `id` (uuid, PK, references `auth.users`), `company_id` (int8, references `companies`), `role` (text).
+
+- **Actualización a tablas sagradas (`lead_memory` y `n8n_chat_histories`):**
+  Ambas tablas recibirán de forma **aditiva**:
+  `ALTER TABLE lead_memory ADD COLUMN company_id int8 REFERENCES companies(id) DEFAULT 1;`
+  `ALTER TABLE n8n_chat_histories ADD COLUMN company_id int8 REFERENCES companies(id) DEFAULT 1;`
+
+### 2. Capa Backend / Server Actions (`queries.ts`)
+
+Todas las funciones de extracción de datos se reescribirán para inyectar un filtro seguro.
+
+#### [MODIFY] [src/lib/services/queries.ts](file:///c:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/lib/services/queries.ts)
+- Se implementará una función privada `getUserCompanyId()` que obtiene la sesión y busca el `company_id` en la tabla `users`.
+- `getLeadsData()`: Se agregará `.eq('company_id', companyId)`.
+- `getChatHistory(numero)`: Se agregará `.eq('company_id', companyId)`.
+- `getLeadMemory(id)`: Se agregará `.eq('company_id', companyId)` para prevenir extracción por fuerza bruta de IDs de otras empresas.
+- `updateLeadEstado()`: Se validará que el lead modificado pertenezca al `company_id` del usuario autenticado.
+
+### 3. Preparación Frontend (UI)
+
+- El Dashboard seguirá funcionando exactamente igual. `Zustand` no se enterará del aislamiento, ya que solo recibirá la lista purgada de leads que pertenecen a su empresa.
+- Esto mantiene inalterada la regla sagrada: `Supabase → queries.ts → DataProvider → Zustand → UI`.
+
+## Verification Plan
+
+### Manual Verification
+1. **Creación del entorno Tenant:** Tras aplicar SQL, verificar en Supabase que todos los leads actuales tienen `company_id = 1`.
+2. **Prueba de Inyección n8n:** Enviar un mensaje de prueba a WhatsApp y verificar que el lead entra y se asigna al `company_id = 1` gracias al valor `DEFAULT`.
+3. **Aislamiento visual:** Entrar al Dashboard con el usuario administrador y confirmar que todos los leads cargan sin problemas.
+4. **Prueba de Multiempresa:** Crear manualmente en base de datos una `company_id = 2` y asignarle un usuario. Al iniciar sesión con ese usuario, el Dashboard debe estar completamente en blanco (Empty States).

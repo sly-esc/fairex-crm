@@ -1,0 +1,89 @@
+# Diseño de FASE 4: Row Level Security (RLS) Zero Trust
+
+Este plan detalla la implementación de las políticas de seguridad a nivel de fila (Row Level Security) nativas de PostgreSQL para garantizar el aislamiento absoluto entre empresas (`company_id`). Todo esto se realiza **sin modificar código TypeScript, sin tocar N8N y sin agregar nuevas columnas**, cumpliendo al 100% con la arquitectura estricta y conservadora solicitada.
+
+## 1. El Concepto "Zero Trust"
+
+Actualmente, el aislamiento se gestiona en la capa de la aplicación (`queries.ts` filtra usando `.eq('company_id', companyId)`). Con RLS activo:
+- La base de datos asume que **todo acceso desde el frontend es hostil**.
+- Aunque un atacante modifique el código del cliente para solicitar `SELECT * FROM lead_memory`, PostgreSQL interceptará la petición, revisará el token JWT (`auth.uid()`), consultará la empresa a la que pertenece ese usuario, y devolverá **únicamente** las filas de su empresa.
+- **N8N no se verá afectado** porque utiliza la clave secreta `service_role`, la cual por diseño en Supabase ignora (bypassa) las reglas RLS.
+
+## 2. Auditoría de Políticas Propuestas
+
+Para cada tabla, primero se debe habilitar RLS (`ALTER TABLE ... ENABLE ROW LEVEL SECURITY`). Una vez habilitado, por defecto **todo acceso está bloqueado** para la clave `anon` y usuarios autenticados hasta que se creen políticas explícitas.
+
+### Tabla: `profiles`
+La tabla donde residen los usuarios del Dashboard.
+
+- **SELECT:** Un usuario solo puede leer su propia fila.
+  - `USING (id = auth.uid())`
+- **UPDATE:** Un usuario solo puede actualizar su propia fila (ej: cambiar su nombre).
+  - `USING (id = auth.uid())`
+- **INSERT / DELETE:** Bloqueadas. La creación de usuarios se asume vía Triggers de Supabase Auth o gestión de administrador.
+
+### Tabla: `lead_memory`
+El núcleo del CRM. Modificado desde N8N e interactuado desde el Dashboard.
+
+- **SELECT:** Un agente solo puede ver leads si el `company_id` del lead coincide con su propio `company_id`.
+  - `USING (company_id = (SELECT company_id FROM profiles WHERE id = auth.uid()))`
+- **UPDATE:** Un agente solo puede modificar (estado, etapa) de un lead que pertenece a su misma empresa.
+  - `USING (company_id = (SELECT company_id FROM profiles WHERE id = auth.uid()))`
+- **INSERT / DELETE:** Bloqueadas desde el Dashboard. Los leads nuevos entran exclusivamente desde N8N (service role).
+
+### Tabla: `n8n_chat_histories`
+La memoria inmutable de las conversaciones de la IA.
+
+- **SELECT:** Un agente solo puede leer transcripciones de chats de su empresa.
+  - `USING (company_id = (SELECT company_id FROM profiles WHERE id = auth.uid()))`
+- **UPDATE / INSERT / DELETE:** Bloqueadas absolutamente desde el Dashboard. Solo N8N inserta estos registros.
+
+## 3. Código SQL Quirúrgico (Borrador para Revisión)
+
+El siguiente script es 100% idempotente (borra la política si existe y la vuelve a crear) para garantizar que pueda ejecutarse sin errores de colisión.
+
+```sql
+-- 1. Habilitar RLS en las 3 tablas críticas
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_memory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE n8n_chat_histories ENABLE ROW LEVEL SECURITY;
+
+-- ==========================================
+-- POLÍTICAS PARA: profiles
+-- ==========================================
+DROP POLICY IF EXISTS "profiles_select_own" ON profiles;
+CREATE POLICY "profiles_select_own" ON profiles
+    FOR SELECT USING (id = auth.uid());
+
+DROP POLICY IF EXISTS "profiles_update_own" ON profiles;
+CREATE POLICY "profiles_update_own" ON profiles
+    FOR UPDATE USING (id = auth.uid());
+
+-- ==========================================
+-- POLÍTICAS PARA: lead_memory
+-- ==========================================
+DROP POLICY IF EXISTS "lead_memory_select_company" ON lead_memory;
+CREATE POLICY "lead_memory_select_company" ON lead_memory
+    FOR SELECT USING (
+        company_id = (SELECT company_id FROM profiles WHERE id = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "lead_memory_update_company" ON lead_memory;
+CREATE POLICY "lead_memory_update_company" ON lead_memory
+    FOR UPDATE USING (
+        company_id = (SELECT company_id FROM profiles WHERE id = auth.uid())
+    );
+
+-- ==========================================
+-- POLÍTICAS PARA: n8n_chat_histories
+-- ==========================================
+DROP POLICY IF EXISTS "chat_histories_select_company" ON n8n_chat_histories;
+CREATE POLICY "chat_histories_select_company" ON n8n_chat_histories
+    FOR SELECT USING (
+        company_id = (SELECT company_id FROM profiles WHERE id = auth.uid())
+    );
+```
+
+> [!CAUTION]
+> **User Review Required:**
+> Por favor revisa detenidamente el diseño y el script. Confirma si estás de acuerdo con que las operaciones de `INSERT` y `DELETE` desde el Dashboard queden bloqueadas (como es el caso de un CRM gestionado por IA) y que el sistema confíe totalmente en N8N para la ingesta. Si apruebas este diseño, podré preparar el archivo `.sql` final para tu ejecución en Supabase.

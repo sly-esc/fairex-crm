@@ -1,0 +1,130 @@
+# Plan de Implementación: FASE 2.2 — Diagnóstico y Migración Completa
+
+## Contexto del Estado Actual
+La integración de Leads y Pipeline (FASE 2.1) está completa y funcionando. La arquitectura `Supabase → queries.ts → DataProvider → Zustand → UI` está establecida.
+
+---
+
+## Diagnóstico Completo: Archivos con Mocks Restantes
+
+### 1. `src/app/(dashboard)/conversaciones/page.tsx` ⚠️ PRIORIDAD ALTA
+Contiene dos objetos locales gigantes:
+- **`MOCK_MESSAGES_DB`** (líneas 24–51): 6 conversaciones de ejemplo con mensajes inventados. No hay conexión con `n8n_chat_histories`.
+- **`MOCK_MEMORY_DB`** (líneas 53–90): Datos de score, etapa, resumen, necesidades y objeciones inventados. No hay conexión con `lead_memory`.
+
+### 2. `src/app/(dashboard)/dashboard/page.tsx` ⚠️
+- **`revenueData`** (líneas 11–19): Array estático de proyección de ingresos, sin tabla correspondiente.
+- **Top Leads Calientes** (líneas 165–201): 3 leads hardcoded (`María González`, `Carlos Ruiz`, `Laura Martínez`) con links a IDs numéricos que ya no coincidirán con los IDs reales de Supabase.
+- **Briefing IA** (líneas 155–158): Texto hardcoded (`"14 nuevos leads"`, `"3 de ellos"`), sin calcular desde datos reales.
+
+### 3. `src/components/layout/TopHeader.tsx` ⚠️
+- **Perfil de usuario** (líneas 246–249): `"Juan Director"` y `"juan@empresa.com"` hardcoded. No consulta Supabase Auth.
+- Avatar con imagen externa (shadcn GitHub).
+
+### 4. `src/lib/store.ts` — Notificaciones y Tasks
+- **`INITIAL_NOTIFICATIONS`** (líneas 91–96): 4 notificaciones de ejemplo. Por ahora no hay tabla `alerts` conectada.
+- **`INITIAL_TASKS`** (líneas 116–122): 5 tareas de ejemplo (María González, Carlos Ruiz...). Por ahora no hay tabla `tasks` conectada.
+> Las páginas `tasks/page.tsx` y `notifications/page.tsx` en sí **no tienen mocks locales** — consumen el store correctamente. El problema está en el store.
+
+---
+
+## Plan de Migración Incremental (Por Riesgo)
+
+### BLOQUE 1: Conversaciones (Prioridad Alta)
+**Tablas:** `n8n_chat_histories` + `lead_memory`
+
+**Estructura de `n8n_chat_histories` (detectada anteriormente):** `id`, `session_id`, `message` (JSON con `type`, `content`, `additional_kwargs`).
+- El `session_id` corresponde al `numero` del lead en `lead_memory`.
+
+**Mapeo de mensajes:**
+| Campo UI | Origen | Transformación |
+|:---|:---|:---|
+| `text` | `message.content` | Directo |
+| `senderId` | `message.type` | `"human"` → `"lead"`, `"ai"` → `"ai"` |
+| `time` | `id` (timestamp en el id) o `created_at` | Formateado |
+| `id` | `id` | `id.toString()` |
+
+**Mapeo del panel Lead Memory (derecho):**
+| Campo UI | Columna `lead_memory` |
+|:---|:---|
+| `score` | `score_lead` |
+| `stage` | `etapa_venta` (normalizar `Contacto_inicial` → `Nuevo`) |
+| `summary` | `resumen_inteligente` |
+| `needs` | `necesidades` (split por comas si es string, o JSON array) |
+| `objections` | `objeciones` (mismo tratamiento) |
+
+**Archivos a modificar:**
+1. `src/lib/services/queries.ts` — Agregar `getChatHistory(numero)` y `getLeadMemory(id)`
+2. `src/app/(dashboard)/conversaciones/page.tsx` — Eliminar `MOCK_MESSAGES_DB` y `MOCK_MEMORY_DB`, reemplazar por carga dinámica real
+3. `src/lib/store.ts` — Agregar `leadMemoryData` al estado para cachear el panel derecho
+
+**Fallbacks:**
+- Si `n8n_chat_histories` devuelve vacío: seguir mostrando `EmptyState` (ya funciona así, sin cambio visual).
+- Si `lead_memory` no tiene datos de la columna: mostrar guiones `—`.
+
+---
+
+### BLOQUE 2: Perfil de Usuario (Prioridad Alta — Bajo Riesgo)
+**Tabla:** Supabase Auth (`auth.users`)
+
+**Plan:**
+1. En `DataProvider.tsx`, llamar `supabase.auth.getUser()` (cliente) al montar.
+2. Guardar `{ name, email, initials }` en el store de Zustand.
+3. En `TopHeader.tsx`, leer del store en lugar del hardcode.
+
+**Fallbacks:**
+- `name` ← `user.user_metadata.name` → si null, usar parte antes del `@` del email.
+- `initials` ← primeras letras del nombre (máximo 2).
+
+**Archivos a modificar:**
+1. `src/lib/store.ts` — Agregar `user: { name, email, initials }` al estado.
+2. `src/components/providers/DataProvider.tsx` — Agregar `getUser()` y `setUser()`.
+3. `src/components/layout/TopHeader.tsx` — Usar datos del store.
+
+---
+
+### BLOQUE 3: Dashboard (Prioridad Media)
+**Tablas:** `lead_memory` (ya cargada en Zustand)
+
+**Plan:** No hacer nuevas consultas. Derivar de `pipelineLeads` que ya está en Zustand:
+- **Top Leads Calientes:** Filtrar `pipelineLeads` con score más alto y estado `ACTIVO`, mostrar top 3 dinámicamente.
+- **Briefing IA:** Calcular `pipelineLeads.length` y `pipelineLeads.filter(l => l.score >= 90).length` para el texto.
+- **Gráfica de Ingresos:** Mantener estática por ahora (no hay tabla de ingresos).
+
+**Archivos a modificar:**
+1. `src/app/(dashboard)/dashboard/page.tsx` — Conectar al store para Top Leads y Briefing. Gráfica permanece estática.
+
+---
+
+### BLOQUE 4: Notificaciones y Tareas (Prioridad Baja — Sin Tabla Real Aún)
+> Según el FAIREX_SYSTEM_BIBLE, las tablas `alerts` y `tasks` existen en el roadmap pero aún no tienen datos activos.
+
+**Plan temporal:** Mantener los `INITIAL_NOTIFICATIONS` e `INITIAL_TASKS` en el store por ahora, pero vaciar sus arrays iniciales y dejar que el DataProvider los llene eventualmente cuando las tablas tengan datos.
+> **No se rompe nada visualmente**: la página ya muestra `EmptyState` cuando el array está vacío.
+
+**Archivos a modificar:**
+1. `src/lib/store.ts` — Vaciar `INITIAL_NOTIFICATIONS` e `INITIAL_TASKS`.
+
+---
+
+## Normalización de Etapas (Aplica a Todos los Bloques)
+Durante el mapeo en `queries.ts`, aplicar:
+```
+"contacto_inicial" → "Nuevo"
+"Contacto_inicial" → "Nuevo"  
+```
+(case-insensitive, sin tocar la base de datos)
+
+---
+
+## Orden de Ejecución Propuesto
+1. ✅ **BLOQUE 2 (Usuario)** — Primero porque es independiente y de bajo riesgo.
+2. 🔄 **BLOQUE 1 (Conversaciones)** — Mayor impacto visual, pero bien aislado.
+3. 🔄 **BLOQUE 3 (Dashboard)** — Derivado del store ya cargado, sin nuevas queries.
+4. 🔄 **BLOQUE 4 (Notif/Tasks)** — Solo vaciar arrays, sin conexión real por ahora.
+
+## User Review Required
+> [!IMPORTANT]
+> Antes de ejecutar necesito confirmar el esquema exacto de `n8n_chat_histories`. ¿Autorizas que ejecute un script de inspección (solo lectura) para ver una fila real de esa tabla? Así garantizamos que el mapeo de mensajes sea correcto antes de modificar la página de Conversaciones.
+> 
+> También: ¿prefieres vaciar las notificaciones y tasks del store (mostrará "sin datos"), o prefieres mantener los mocks iniciales hasta que las tablas `alerts` y `tasks` tengan datos reales?

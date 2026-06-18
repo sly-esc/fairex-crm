@@ -1,0 +1,54 @@
+# Auditoría Estratégica: Parche Conservador de Identidad (`auth_user_id`)
+
+Has planteado una excelente estrategia de contingencia. Modificar la tabla `profiles` agregando `auth_user_id UUID` es, sin lugar a dudas, la ruta más pragmática, conservadora y segura para salvar la inversión de las Fases 1, 2 y 3 sin romper la V1. 
+
+A continuación, la auditoría detallada punto por punto sobre la viabilidad y los riesgos de esta decisión:
+
+## 1. Modificaciones requeridas en `queries.ts`
+**Sí, requerirá una modificación mínima y segura.**
+Actualmente tienes: `.eq('id', user.id)`. Al cambiar esto a `.eq('auth_user_id', user.id)`, detendrás el error silencioso de PostgreSQL. La lógica del resto del archivo permanecerá exactamente igual. Todo seguirá fluyendo hacia el `fallback` si no hay coincidencias, manteniendo la red de seguridad intacta.
+
+## 2. Riesgos del Backfill y Asociación de Usuarios
+**Riesgo bajo, pero requiere atención.**
+Como la tabla `profiles` antigua no tenía vinculación con Supabase Auth, la base de datos no sabe qué fila de `profiles` (ej. ID 1) pertenece a qué UUID de `auth.users`.
+*   **Si hay un solo usuario en producción:** El backfill es trivial. Podemos hacer un SQL que asigne el único UUID existente en `auth.users` a la primera fila de `profiles`.
+*   **Si hay múltiples usuarios:** Necesitaremos un punto en común (como el `email` si existe en `profiles`) para hacer un cruce automático (`JOIN`). Si no hay `email`, la asignación deberá hacerse manualmente en la interfaz de Supabase antes de forzar el RLS, o de lo contrario los usuarios quedarán bloqueados (downtime).
+
+## 3. Compatibilidad con el RLS ya diseñado
+**Compatibilidad Absoluta (100%).**
+El diseño de la FASE 4 fue tan modular que el 90% del SQL queda intacto.
+Solo necesitamos modificar dos líneas:
+1.  **La Función Maestra:**
+    ```sql
+    SELECT company_id FROM profiles WHERE auth_user_id = auth.uid();
+    ```
+2.  **La Política de la propia tabla `profiles`:**
+    ```sql
+    CREATE POLICY "profiles_select_own" ON profiles
+    USING (auth_user_id = auth.uid());
+    ```
+Las políticas de `lead_memory`, `n8n_chat_histories` y `companies` seguirán usando `get_my_company_id()` sin enterarse del cambio subyacente.
+
+## 4. Mantenimiento de N8N y Service Role
+**Garantizado.**
+N8N ni siquiera sabe que existe `profiles`. Interactúa directo con `lead_memory` y `n8n_chat_histories` mediante el `service_role`. La adición de la columna `auth_user_id` a `profiles` es invisible para N8N. Todo seguirá funcionando.
+
+## 5. Riesgos de Rollback
+**Cero.** 
+Agregar una nueva columna (`ADD COLUMN IF NOT EXISTS`) es una operación aditiva y no destructiva. Si algo falla, la columna `id` (BIGINT) sigue existiendo y los datos de V1 están intactos.
+
+## 6. Idempotencia y Orden de Ejecución Seguro
+La secuencia SQL será 100% idempotente:
+
+1.  **Esquema:** `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS auth_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;`
+2.  **Backfill (Crucial):** Intentar poblar `auth_user_id` para los perfiles críticos (por definir el método).
+3.  **Función:** Recrear `get_my_company_id()` usando `auth_user_id`.
+4.  **RLS:** Habilitar y forzar RLS (`ENABLE` + `FORCE`), y desplegar políticas (cambiando `id` por `auth_user_id` en `profiles`).
+
+---
+
+> [!CAUTION]
+> **Decisión Crítica sobre el Backfill**
+> La estrategia es sólida y la apruebo arquitectónicamente. El único eslabón suelto es **el cruce de datos**. 
+> ¿Actualmente existe una columna `email` en la tabla `profiles` para poder emparejar automáticamente los usuarios con `auth.users`? 
+> Si no hay `email` y hay un solo usuario activo (tú), podemos forzar a que el backfill tome el primer UUID disponible en `auth.users` y lo inyecte en el `profile` con id=1. ¿Cómo deseas proceder con este emparejamiento?

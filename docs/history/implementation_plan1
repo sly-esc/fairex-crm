@@ -1,0 +1,54 @@
+# Auditoría UX Final y Cierre de Fase 1 (MVP)
+
+Esta auditoría final asegura que ningún botón o flujo parezca "roto" y que existan todas las vistas clave antes de conectar con bases de datos reales. Para proveer feedback instantáneo, instalaremos la librería **Sonner** (`shadcn/ui toast`) que mostrará alertas de sistema "Próximamente" en las integraciones futuras.
+
+## 1. Módulo Conversaciones
+- [ ] **Toggle IA / Humano**: Funcionamiento interactivo. Al hacer clic, el estado cambiará entre "IA Activa" (Verde) e "IA Pausada" (Naranja) y lanzará un Toast de confirmación de transferencia.
+- [ ] **Opciones Adicionales (`...`)**: Creación de Dropdown real con:
+  - Ver Ficha CRM (Abre `/leads/[id]`)
+  - Exportar conversación (Muestra Toast)
+  - Marcar prioridad (Muestra Toast)
+  - Silenciar lead (Muestra Toast)
+- [ ] **Acciones Rápidas (Llamada, Video)**: Mostrarán un Toast elegante *"Funcionalidad en desarrollo"*.
+- [ ] **Chat Input**: Enviar mensajes de prueba que actualicen el chat visualmente de forma local.
+
+## 2. Dashboard Ejecutivo
+- [ ] **Navegación de KPIs**: Envolver las tarjetas en componentes `<Link>` interactivos.
+  - "Leads Activos" redirige a `/leads`.
+  - "Conversaciones IA" redirige a `/conversaciones`.
+  - "Intervención Humana" redirige a `/notifications`.
+  - Animación sutil de *hover* para indicar clicalidad.
+
+## 3. Módulo de Configuración (`/settings`)
+- [ ] **Nueva Pantalla Mock**: Creación de la ruta estática `/settings` manteniendo la identidad visual premium (Glassmorphism oscuro).
+- [ ] **Pestañas (Tabs)**:
+  - Datos de Empresa
+  - Branding White Label
+  - Ajustes IA (Temperatura, Prompt Base)
+  - Integraciones (Supabase, WhatsApp, n8n)
+- [ ] **Feedback**: Los formularios serán visuales y los botones de "Guardar" emitirán Toasts simulando carga y guardado exitoso.
+
+## 4. Navegación Global (Header)
+- [ ] **Menú de Perfil (`Avatar`)**: 
+  - "Perfil" y "Soporte" mostrarán Toast.
+  - "Cerrar Sesión" redigirá visualmente al nuevo login.
+
+## 5. Accesos y Sesión (`/login`, `/recover-password`)
+- [ ] **Login UI**: Diseño de pantalla de inicio de sesión alineada a la estética premium de FAIREX. 
+- [ ] **Recuperar Contraseña UI**: Pantalla para solicitar recuperación de cuenta.
+- [ ] **Simulación**: Al introducir cualquier credencial, simular un *loading* state y redirigir al `/dashboard` como si la sesión fuera validada.
+
+## 6. Revisión Transversal (Leads, Pipeline, Alertas)
+- [ ] **Leads y Pipeline**: Los botones de `Filtros` y las acciones contextuales (`...`) en las tarjetas del pipeline desplegarán Dropdowns visuales con funciones simuladas y Toasts.
+- [ ] Todos los iconos huérfanos estarán conectados a Toasts o Modals estáticos.
+
+---
+
+> [!IMPORTANT]
+> **Plan de Ejecución:**
+> Esta lista cubre todos los flujos solicitados. Si apruebas este plan final, ejecutaré la construcción de:
+> 1. Componente global Toaster (Sonner).
+> 2. Vistas de Login y Settings.
+> 3. Refactorización transversal de los elementos huérfanos.
+>
+> ¿Procedo con la ejecución de todo el plan?

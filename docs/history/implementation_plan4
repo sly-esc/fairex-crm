@@ -1,0 +1,38 @@
+# Plan de Unificación Visual de Etapas (Leads y Pipeline)
+
+He analizado cómo se están manejando actualmente los colores de las etapas en tu aplicación.
+
+### 1. ¿Qué componente o archivo define actualmente los estilos?
+Actualmente, los estilos están **duplicados y difieren** entre dos archivos principales:
+- **Pipeline:** `src/app/(dashboard)/pipeline/page.tsx` (líneas 116-123). Aquí se usa un punto con brillo sólido (ej. `bg-amber-500 shadow-[0_0_8px_currentColor]`).
+- **Leads:** `src/app/(dashboard)/leads/page.tsx` (líneas 171-176). Aquí se usa el componente `<Badge>` con clases como `bg-amber-500/10 text-amber-400 border-amber-500/20`.
+- Además, en Leads el color "Seguimiento" estaba en un tono gris (`zinc-500`), mientras que en el Pipeline estaba en color morado (`purple-500`).
+
+### 2. ¿Pueden reutilizarse esos estilos?
+Sí, absolutamente. Podemos abstraer estos estilos para evitar la duplicación y garantizar que cualquier cambio futuro se refleje automáticamente en toda la plataforma.
+
+### 3. Propuesta de Unificación (Solución Elegante)
+
+Para unificar visualmente las etapas manteniendo el fondo semitransparente, los bordes suaves y el brillo sutil característico de la plataforma, propongo crear un archivo de configuración central (por ejemplo, `src/lib/constants/stages.ts` o un componente `<StageBadge>`).
+
+**Configuración centralizada propuesta:**
+- **Nuevo:** Plateado brillante (`slate-400` / `slate-50`).
+- **Interesado:** Azul (`blue-500` / `blue-400`).
+- **Seguimiento:** Morado (`purple-500` / `purple-400`).
+- **Caliente:** Amarillo/Dorado (`amber-500` / `amber-400`).
+- **Cerrado:** Verde (`emerald-500` / `emerald-400`).
+- **Perdido:** Rojo (`red-500` / `red-400`).
+
+## Archivos a modificar:
+
+1. **`src/lib/utils/stages.ts` (Nuevo)**
+   - Crearé este pequeño archivo que exportará un objeto o función (ej. `getStageStyles(stage)`). Este contendrá la definición única de clases CSS (colores de fondo, texto, bordes y brillo) para cada etapa.
+2. **`src/app/(dashboard)/leads/page.tsx`**
+   - Importaré la configuración unificada y reemplazaré el bloque gigante de condiciones del `<Badge>` por la llamada limpia a los estilos centralizados.
+3. **`src/app/(dashboard)/pipeline/page.tsx`**
+   - Importaré la configuración unificada y actualizaré la cabecera de las columnas del Kanban para que el "punto de color" (dot) extraiga su color base de esta misma configuración.
+
+## User Review Required
+> [!IMPORTANT]
+> - ¿Estás de acuerdo con centralizar los estilos en `src/lib/utils/stages.ts`?
+> - ¿Deseas que en el Pipeline siga apareciendo únicamente el "puntito" de color junto al nombre de la columna, pero asegurándonos de que tome el mismo color exacto que el Badge en Leads, o prefieres que la columna del Pipeline también use el Badge completo?

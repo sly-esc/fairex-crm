@@ -1,0 +1,45 @@
+# Diagnóstico y Plan: Cierre Definitivo del Dashboard
+
+He revisado el código actual de `src/app/(dashboard)/dashboard/page.tsx` y la estructura de los datos que tenemos disponibles en el store (`Zustand`). A continuación, detallo el plan exacto para reemplazar los datos estáticos respetando tus restricciones (sin nuevas consultas a Supabase y sin tocar la UI).
+
+## 1. Archivos que serán modificados
+* **`src/app/(dashboard)/dashboard/page.tsx`**: Único archivo a modificar. Aquí extraeremos `conversations` del `useAppStore` y reemplazaremos los valores de los 4 `StatCard` y del `AreaChart`.
+
+## 2. Métricas y arrays ficticios que siguen existiendo (y serán eliminados)
+* El array `revenueData` (usado para la gráfica).
+* Las propiedades `value` y `trend` en los 4 `StatCard` ("Ventas Totales", "Leads Activos", "Conversiones IA", "Intervención Humana").
+
+## 3. Cómo se calculará cada nuevo valor (Usando solo memoria)
+
+* **Tarjeta 1: Conversaciones Totales (Reemplaza a "Ventas Totales")**
+  * **Cálculo:** `conversations.length` (extraído del store).
+  * **Icono/Diseño:** Se mantiene `DollarSign` (o lo puedo cambiar a `MessageSquare` si prefieres, aunque pediste no tocar diseño, así que por defecto lo mantengo o uso un ícono de chat).
+* **Tarjeta 2: Leads Activos**
+  * **Cálculo:** `activeLeads.length` (leads en pipeline que no estén en estado "EXCLUIR").
+* **Tarjeta 3: Conversaciones IA**
+  * **Cálculo:** Dado que pediste no inventar porcentajes ni hacer consultas nuevas, usaré la propiedad `assignee` que ya viene del backend para los leads. En `queries.ts`, los leads sin asignar tienen por defecto `'IA'`. 
+  * **Fórmula:** `activeLeads.filter(l => l.assignee === 'IA').length`.
+* **Tarjeta 4: Intervención Humana**
+  * **Cálculo:** Siguiendo la misma lógica, leads asignados a un humano.
+  * **Fórmula:** `activeLeads.filter(l => l.assignee !== 'IA').length`. Si no hay humanos asignados, mostrará `0` tal como solicitaste.
+
+## 4. La Gráfica Principal ("Actividad de Conversaciones") y sus Fallbacks Temporales
+
+> [!WARNING]
+> **Limitación detectada en Memoria:** Actualmente, los objetos `Lead` y `Conversation` guardados en Zustand **no incluyen la fecha de creación completa**. El backend de Supabase sí la tiene, pero el archivo `queries.ts` solo inyecta en memoria la hora en formato texto (ej. `"15:30"`) y descarta el día/mes.
+> 
+> Como solicitaste **estrictamente no hacer consultas nuevas ni modificar `queries.ts`**, no podemos agrupar las conversaciones por días pasados (Lunes, Martes, Miércoles...) porque esa información no existe en el frontend.
+
+### Fallback propuesto para la gráfica:
+Dado que debemos usar los datos en memoria y la gráfica es de tipo área (`AreaChart` de `recharts`), propongo transformar el eje X de "Meses" a "Etapas del Pipeline" (Nuevo, Calificado, Negociación, etc.).
+* **Nombre de la gráfica:** "Volumen por Etapas" o "Actividad actual".
+* **Data:** Agruparemos `pipelineLeads` por `stage` para mostrar cuántos leads hay en cada columna del pipeline. La gráfica se verá visualmente idéntica (misma curva verde, mismos estilos), pero los puntos abajo dirán "Nuevo", "Calificado", en lugar de "Ene", "Feb".
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> ¿Apruebas que la gráfica agrupe la información por **Etapa del Pipeline** en lugar de por **Tiempo**, dado que no tenemos las fechas en memoria y no queremos modificar las consultas actuales?
+> 
+> Si me das el visto bueno, aplicaré todos los reemplazos de inmediato.

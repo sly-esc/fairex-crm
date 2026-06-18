@@ -1,0 +1,37 @@
+# Auditoría Forense: El Espejismo de la Tabla `profiles`
+
+El error que acabas de reportar (`operator does not exist: bigint = uuid`) es el descubrimiento arquitectónico más importante de la FASE 4. 
+
+He realizado una autopsia profunda cruzando este error de PostgreSQL con tu código TypeScript (`queries.ts`) y el script de inicialización original (`0001_fairex_v2_init.sql`). Aquí están las respuestas precisas y crudas a tus preguntas:
+
+## Respuestas a la Auditoría
+
+1. **Confirmación de `profiles.id`:** **SÍ, ES UN BIGINT.** El error del motor de PostgreSQL es irrefutable. La columna `id` de `profiles` es de tipo número entero largo (`int8`), no un UUID.
+2. **El Fallo Silencioso en TypeScript:** Pensábamos que la línea `.eq('id', user.id)` en `queries.ts` funcionaba perfectamente. La realidad es que **siempre ha estado fallando en silencio**. 
+   Al intentar comparar `bigint` con `uuid`, Supabase lanzaba el error, pero tu código lo capturaba así:
+   ```typescript
+   if (error || !data) return 1 // Fallback si no existe perfil aún
+   ```
+   El dashboard de la FASE 3 parecía funcionar a la perfección únicamente porque el "Fallback a 1" coincidía con la empresa del backfill (Empresa 1). El aislamiento a nivel de aplicación era un espejismo.
+3. **¿Foreign Key hacia `auth.users`?** **NO EXISTE.** Es matemáticamente imposible crear una FK directa entre un `bigint` (profiles.id) y un `uuid` (auth.users.id).
+4. **Columna de enlace (`user_id` / `auth_id`):** Al revisar tu migración `0001_fairex_v2_init.sql`, se observa que en V2 creaste tablas como `user_profiles` y `company_members` que sí manejan UUIDs correctos, pero la tabla antigua `users` (la que renombramos a `profiles` en la Fase 3) es claramente una tabla "Legacy" de V1 que utilizaba enteros secuenciales y **nunca** fue enlazada al sistema moderno de Supabase Auth (UUID).
+5. **Primary Key:** La PK de `profiles` sigue siendo ese `id` (bigint).
+
+---
+
+## El Impacto en la Arquitectura Zero Trust
+
+Dado que `profiles.id` es un `bigint` y no existe relación criptográfica con `auth.uid()`, **no podemos usar la tabla `profiles` actual para RLS sin modificarla**. Si no reparamos esta tabla, cualquier RLS basado en el usuario estará estructuralmente roto.
+
+### Dos Caminos Posibles para Rediseñar
+
+1. **La Vía del Parche (Modificar `profiles`)**
+   Agregamos una nueva columna `auth_user_id (UUID)` a la tabla `profiles` existente, la enlazamos con `auth.users(id)` mediante una Foreign Key, y hacemos un UPDATE manual (backfill) para enlazar tu usuario actual. Modificamos `get_my_company_id()` para buscar por esa nueva columna. (Requiere tocar TypeScript para cambiar `.eq('id', user.id)` a `.eq('auth_user_id', user.id)`).
+
+2. **La Vía de la V2 Pura (Usar `company_members` / `user_profiles`)**
+   En tu archivo `0001`, ya tienes tablas modernas diseñadas para UUIDs. Podríamos abandonar la tabla legacy `profiles`, y re-direccionar la seguridad RLS y TypeScript para que lean directamente desde `company_members` (que ya tiene `company_id` y `user_id` UUID).
+
+> [!CAUTION]
+> **Decisión Arquitectónica Requerida**
+> El descubrimiento de este error significa que tu base de datos arrastra una deuda técnica grave de la versión 1. No podemos continuar con las políticas RLS sin resolver la identidad del usuario. 
+> ¿Cuál de las dos vías prefieres tomar? ¿Agregar la columna `auth_user_id` a la tabla `profiles` actual (más conservador respecto a los datos), o migrar la lectura a la tabla `company_members` diseñada en V2?

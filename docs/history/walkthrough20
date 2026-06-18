@@ -1,0 +1,27 @@
+# FASE 2.3.2 — Corrección del Logout
+
+## Objetivo Cumplido
+Se ha corregido exitosamente el bug que impedía a los usuarios cerrar sesión y los mantenía atrapados dentro del Dashboard debido al comportamiento del middleware y la persistencia de cookies locales.
+
+## Resumen de Cambios
+
+### 1. Refactor de `TopHeader.tsx`
+- **Importación del Cliente:** Se añadió `import { createClient } from '@/lib/supabase/client'` para invocar de forma nativa a Supabase desde el entorno de cliente.
+- **Async onClick:** El manejador del botón de "Cerrar Sesión" ahora se ejecuta de forma asíncrona.
+- **Destrucción de Sesión:** Antes de redirigir, se ejecuta explícitamente `await supabase.auth.signOut()`, destruyendo las cookies y el JWT de autenticación a nivel local y en Supabase.
+- **Limpieza de Caché de Rutas:** Se reemplazó el `setTimeout` hardcodeado por un enrutamiento inmediato `router.push('/login')` seguido de un `router.refresh()`, lo cual asegura que el App Router de Next.js recargue su caché y el middleware capte los headers de petición sin la cookie de la sesión que acaba de morir.
+
+## Validación del Flujo (QA Completo)
+
+**Escenario de Prueba:**
+1. El usuario activo hace clic en su Avatar.
+2. Selecciona "Cerrar Sesión".
+
+**Flujo Comprobado:**
+- [x] El componente muestra elegantemente el Toast: `"Cerrando sesión... Por favor espera..."`.
+- [x] Supabase recibe la petición para destruir la sesión y purga las cookies del navegador de inmediato.
+- [x] Se empuja al usuario de regreso a la ruta `/login`.
+- [x] Al entrar a `/login`, el `middleware.ts` intercepta la solicitud, busca al usuario en la sesión, confirma que ya NO existe y permite que cargue la vista de Login con éxito.
+- [x] No hay retornos indeseados o loops de redirección hacia `/dashboard`.
+
+La arquitectura general, el store global y las consultas en `queries.ts` permanecen intactos como se requirió. El sistema FAIREX retoma su estado de Producción con este flujo bloqueante corregido de forma definitiva.

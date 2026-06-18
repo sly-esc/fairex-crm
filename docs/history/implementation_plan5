@@ -1,0 +1,68 @@
+# Informe de Estado: Migración Dashboard → Supabase
+
+De acuerdo a la directriz de mantener la arquitectura escalable y aditiva, he analizado en profundidad el estado actual del Frontend (`src/app/(dashboard)/*`) y la capa de estado (`src/lib/store.ts`).
+
+A continuación presento el diagnóstico y el plan de migración para las siguientes fases.
+
+---
+
+## 1. Vistas que siguen utilizando datos de ejemplo
+Prácticamente todas las vistas del dashboard dependen actualmente de datos simulados:
+- **`dashboard/page.tsx`**: Utiliza datos estáticos locales para el gráfico de ingresos y los leads calientes.
+- **`leads/[id]/page.tsx`**: Utiliza un objeto local para simular la vista detallada (CRM) del lead.
+- **`conversaciones/page.tsx`**: Depende de objetos locales para el historial de chat y el resumen de memoria de la IA.
+- **Vistas globales (Leads, Pipeline, Tasks, Notifications, Settings)**: Consumen sus datos directamente del estado global de Zustand (`useAppStore`), el cual se inicializa con arrays estáticos.
+
+## 2. Componentes y archivos que dependen de arrays Mock
+Existen dos niveles de dependencia de mocks:
+- **Mocks Locales (Hardcoded en las páginas):**
+  - `revenueData` (en `dashboard/page.tsx`)
+  - `MOCK_MESSAGES_DB` y `MOCK_MEMORY_DB` (en `conversaciones/page.tsx`)
+  - `MOCK_DB` (en `leads/[id]/page.tsx`)
+- **Estado Global (`src/lib/store.ts`):**
+  - `INITIAL_NOTIFICATIONS`, `INITIAL_CONVERSATIONS`, `INITIAL_LEADS`, `INITIAL_TASKS`.
+  - Propiedades predeterminadas de `branding` y `company`.
+
+## 3. Mapeo: Vistas ↔ Tablas Reales de Supabase
+Para sustituir los mocks, el sistema deberá conectarse a las siguientes tablas de la base de datos:
+
+| Vista / Componente | Tabla(s) de Supabase | Descripción de los datos a extraer |
+| :--- | :--- | :--- |
+| **Leads & Pipeline** | `lead_memory` | Nombre, empresa, etapa, score, estado (Activo/Excluido). |
+| **Conversaciones** | `lead_memory` + `n8n_chat_histories` | `lead_memory` para la bandeja de entrada; `n8n_chat_histories` para cargar los mensajes exactos del chat. |
+| **Ficha CRM (Leads Detail)** | `lead_memory` + `n8n_chat_histories` | Briefing, necesidades y objeciones extraídas por la IA (`lead_memory`), y el historial de interacción. |
+| **Dashboard (Resumen)** | `lead_memory` + (Opcional) `tasks` | Agregación matemática (COUNT, AVG) de leads activos, scores y tasas de conversión. |
+| **Tasks** | `tasks` | Lista de seguimientos manuales o automáticos. |
+| **Notifications** | `alerts` | Notificaciones internas generadas por el sistema. |
+| **Settings** | `companies` + `users` | Datos del tenant (branding, color principal) e información del usuario actual. |
+
+## 4. Archivos que ya usan Supabase correctamente
+El puente técnico ya está construido y validado:
+- **Capa de Autenticación:** `src/lib/supabase/client.ts`, `server.ts` y `middleware.ts` están listos para gestionar sesiones y el Row Level Security (RLS).
+- **Consultas de Datos:** `src/lib/services/queries.ts` (ya implementamos con éxito `updateLeadEstado` modificando `lead_memory` directamente en la base de datos).
+
+## 5. ¿Qué falta para funcionar 100% con datos reales? (Fases Siguientes)
+
+Para lograr la transición completa sin romper la interfaz de usuario, propongo el siguiente plan de migración estructurado:
+
+### FASE 2.1: Reemplazar el motor de la Tabla principal (`lead_memory`)
+1. Expandir `queries.ts` para crear la función `getLeads()`.
+2. Modificar el Store (`store.ts`): Reemplazar `INITIAL_LEADS` e `INITIAL_CONVERSATIONS` por arrays vacíos.
+3. Crear un efecto de sincronización (o usar Server Components) para poblar el Store en tiempo de ejecución extrayendo los datos reales de `lead_memory`. (Esto alimentará automáticamente Pipeline, Leads y la bandeja de Conversaciones).
+
+### FASE 2.2: Sincronizar el Historial de Chats y Ficha CRM
+1. Eliminar los `MOCK_MESSAGES_DB` y `MOCK_DB`.
+2. Crear funciones para extraer un lead específico y su historial cruzando `lead_memory` con `n8n_chat_histories`.
+
+### FASE 2.3: Módulos Secundarios
+1. **Settings / Branding:** Conectar la configuración visual a la tabla `companies`.
+2. **Dashboard:** Crear consultas de agregación (SQL Views o funciones RPC) para extraer las estadísticas reales.
+3. **Tasks & Notifications:** Migrar estos mocks a las tablas `tasks` y `alerts`.
+
+---
+
+## User Review Required
+> [!IMPORTANT]
+> Este es el diagnóstico completo. Si estás de acuerdo, la ruta más segura para continuar es iniciar con la **FASE 2.1**, que consiste en alimentar el Pipeline y el Directorio de Leads directamente desde `lead_memory` eliminando los `INITIAL_LEADS` del store.
+> 
+> ¿Apruebas este plan para comenzar a reemplazar los datos del Pipeline/Leads con la base de datos real?
