@@ -162,8 +162,8 @@ export default function PipelinePage() {
                         transition={{ type: 'spring', stiffness: 300, damping: 25 }}
                         key={lead.id}
                         draggable
-                        onDragStart={(e) => handleDragStart(e, lead)}
-                        onDragEnd={handleDragEnd}
+                        onDragStart={(e: any) => handleDragStart(e, lead)}
+                        onDragEnd={(e: any) => handleDragEnd(e)}
                         className="bg-zinc-900/80 hover:bg-zinc-800/80 border border-white/10 rounded-xl p-4 cursor-grab active:cursor-grabbing transition-colors shadow-lg hover:shadow-xl hover:border-primary/30 group relative"
                         onClick={() => router.push(`/leads/${lead.id}`)}
                       >
