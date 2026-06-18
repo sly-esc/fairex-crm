@@ -185,11 +185,11 @@ export default function LeadsPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={(e) => e.stopPropagation()}>
-                          <span className="sr-only">Abrir menú</span>
-                          <ArrowUpRight className="h-4 w-4" />
-                        </Button>
+                      <DropdownMenuTrigger render={
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={(e) => e.stopPropagation()} />
+                      }>
+                        <span className="sr-only">Abrir menú</span>
+                        <ArrowUpRight className="h-4 w-4" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="bg-zinc-950 border-white/10 text-zinc-200">
                         <DropdownMenuItem onClick={(e) => { e.stopPropagation(); router.push(`/leads/${lead.id}`) }}>

@@ -48,10 +48,10 @@ export function TopHeader() {
     <header className="h-16 flex items-center justify-between px-6 bg-black/40 backdrop-blur-xl border-b border-white/10 sticky top-0 z-30">
       <div className="flex items-center gap-4 flex-1">
         <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" className="md:hidden text-zinc-400 hover:text-white">
-              <Menu className="h-5 w-5" />
-            </Button>
+          <SheetTrigger render={
+            <Button variant="ghost" size="icon" className="md:hidden text-zinc-400 hover:text-white" />
+          }>
+            <Menu className="h-5 w-5" />
           </SheetTrigger>
           <SheetContent side="left" className="p-0 border-none bg-transparent w-64" showCloseButton={false}>
             <AppSidebar />
