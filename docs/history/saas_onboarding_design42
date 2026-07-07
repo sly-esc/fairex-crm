@@ -1,0 +1,84 @@
+# Arquitectura de Onboarding y Multitenancy: FAIREX Business OS
+
+Este documento define la arquitectura a largo plazo del ecosistema SaaS de FAIREX. Establece las responsabilidades exactas de cada componente (Next.js, Supabase, n8n), el ciclo de vida de las empresas, y el diseño de la base de datos para soportar un modelo multiempresa robusto y escalable sin deuda técnica.
+
+---
+
+## 1. Principio Fundacional: Multitenancy basado en `company_id`
+
+Todo el Business OS gira en torno a un único eje: el `company_id`. 
+Cualquier módulo actual (perfiles, leads, conversaciones) o futuro (inventario, tareas, bases de conocimiento) debe tener obligatoriamente una relación de clave foránea hacia `companies(id)`. Esto garantiza el aislamiento absoluto de los datos por inquilino mediante políticas RLS (Row Level Security).
+
+---
+
+## 2. Ciclo de Vida de la Empresa (Estados de Onboarding)
+
+El onboarding de una empresa no es un proceso atómico, sino un flujo de estados secuenciales. La tabla `companies` incluirá una columna `status` para controlar este ciclo:
+
+| Estado | Significado | Restricciones RLS y de Sistema |
+|---|---|---|
+| `draft` | **(Fase Pre-Onboarding)** Cliente existe a nivel comercial (ej. en el CRM interno o Stripe) pero no ha comenzado el setup técnico en la plataforma. | Acceso bloqueado. |
+| `pending` | Datos iniciales capturados, esperando aprobación o validación de pagos para iniciar el aprovisionamiento. | Acceso solo a pantalla de "En espera". |
+| `provisioning` | n8n está ejecutando scripts pesados (WhatsApp, Vector DB, etc.). | Acceso a dashboard mostrando barras de progreso. |
+| `active` | Empresa operando con normalidad. | Acceso completo según RLS y roles. |
+| `suspended` | Inactividad, falta de pago o baneo temporal. | Modo de solo lectura o acceso denegado. |
+
+---
+
+## 3. Arquitectura de Datos Perimetral (Extensibilidad)
+
+Para mantener la tabla `companies` limpia y orientada únicamente a identidad de nivel superior, el resto del contexto de la empresa se delega a tablas especializadas (Patrón Entity-Attribute-Value y 1-a-1).
+
+### A. Tabla `company_settings` (Configuración Central)
+Almacena el contexto operativo y de marca de la empresa. **No** se crea desde el trigger de usuarios, sino en la Fase 1 o 3.
+- `company_id` (PK, FK a companies)
+- `branding` (JSONB: logo, colores, dominio personalizado)
+- `ai_preferences` (JSONB: tono de voz, instrucciones globales del bot)
+- `timezone` y `locale`
+- `features_enabled` (JSONB: flags para activar/desactivar módulos específicos comprados)
+
+### B. Tabla `company_integrations` (Proveedores Externos)
+Administra la conexión del inquilino con el mundo exterior. Aislar esto permite cambiar proveedores sin afectar el core.
+- `id` (PK)
+- `company_id` (FK a companies)
+- `provider` (Enum: 'ycloud', 'meta', 'shopify', 'woocommerce', 'openai')
+- `credentials` (JSONB Encriptado / Secretos de Vault)
+- `status` (Enum: 'connected', 'error', 'syncing')
+- `last_sync_at` (Timestamptz)
+
+---
+
+## 4. Responsabilidades por Capa (Separation of Concerns)
+
+| Componente | Rol en el Onboarding |
+|---|---|
+| **Next.js (Admin API)** | **Orquestador Comercial**. Valida el estado (`draft` → `provisioning`), inserta en `companies` y crea a los usuarios en Supabase Auth inyectando la metadata del contrato. |
+| **Supabase (Trigger y RLS)** | **Guardián de Identidad**. El trigger tiene la responsabilidad ÚNICA de crear `profiles`. No interviene en `company_settings` ni en integraciones. RLS aísla los datos usando `company_id`. |
+| **n8n (Workflows)** | **Motor de Aprovisionamiento**. Recibe la invocación explícita (Webhook) desde Next.js, ejecuta las llamadas a YCloud/Pinecone, puebla `company_settings` / `company_integrations`, y finalmente marca el status de la empresa como `active`. |
+
+---
+
+## 5. Flujo Completo de Onboarding
+
+### Fase 0: Pre-Onboarding (Draft)
+El equipo de ventas o el sistema de pagos crea el esqueleto del registro en `companies` con estado `draft`.
+
+### Fase 1: Transición a Provisioning
+**Actor:** Next.js
+Un administrador (o el cliente en modelo self-service) completa el formulario. Next.js cambia el status de la empresa a `provisioning`.
+
+### Fase 2: Creación de la Identidad
+**Actor:** Next.js → Supabase Auth → Trigger
+1. Next.js llama a `supabase.auth.admin.createUser()`.
+2. **El Contrato:** Inyecta `raw_user_meta_data: { company_id: X, role: 'owner' }`.
+3. **El Trigger:** (El que instalamos en Fase 5). Lee el contrato, valida que la empresa exista, y crea el registro en `profiles` atómicamente. Mantiene su responsabilidad estrictamente limitada a la identidad.
+
+### Fase 3: Aprovisionamiento (Asíncrono)
+**Actor:** Next.js → n8n
+1. Una vez que la identidad y la empresa están creadas, **Next.js invoca explícitamente un Webhook de n8n** enviando el payload inicial (`company_id`, plan, etc.).
+2. n8n se conecta a YCloud y aprovisiona la línea de WhatsApp, insertando las credenciales en `company_integrations`.
+3. Configura las preferencias base en `company_settings`.
+4. Al finalizar, n8n actualiza `companies.status = 'active'`.
+
+### Fase 4: Operación y RLS
+El cliente inicia sesión. Next.js recibe el JWT, Supabase aplica las políticas RLS `USING (company_id = auth_user.company_id)`, y el cliente opera dentro de su inquilino de forma totalmente aislada y segura.

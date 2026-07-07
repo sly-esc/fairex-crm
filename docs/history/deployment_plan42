@@ -1,0 +1,72 @@
+# Deployment Plan: Cierre de la Fase 4
+
+Este documento establece la hoja de ruta definitiva para ejecutar las migraciones pendientes sin riesgo de caída en producción.
+
+## Objetivo
+Instalar el trigger de onboarding, migrar la aplicación Next.js para usar `auth_user_id` y eliminar de forma segura el fallback estático `company_id = 1`.
+
+---
+
+## 🚦 Bloque 2B: Motor de Onboarding (El Trigger)
+
+**Acción:**
+Ejecutar el script `migration_phase_5_bloque2b_trigger.sql` en el SQL Editor de Supabase.
+
+**Qué hace:**
+Instala la función `handle_new_auth_user()` y el trigger en `auth.users`. A partir de ese segundo, cualquier usuario nuevo que se envíe con metadata tendrá su perfil creado automáticamente.
+
+**Verificación inmediata:**
+1. Consultar `information_schema.triggers` para asegurar que `on_auth_user_created` existe y apunta a la nueva función.
+
+---
+
+## 🚦 Bloque 2A (Revisado): Vinculación de admin2
+
+**Contexto:** El trigger no actúa sobre usuarios que ya existen. El usuario `admin2.dev@gmail.com` no tiene perfil.
+**Acción:**
+Insertar manualmente el perfil de `admin2` en la base de datos vinculándolo al `company_id = 1` y con su `auth_user_id` correspondiente.
+
+**Verificación inmediata:**
+1. Consultar `SELECT * FROM profiles;` y confirmar que devuelve 1 fila con los datos correctos de `admin2`.
+
+---
+
+## 🚦 Bloque 3: Actualización de la App (Next.js)
+
+**Acción:**
+Modificar el código fuente de Next.js (específicamente la función `getUserCompanyId` y cualquier derivado) para que consulte la base de datos usando `.eq('auth_user_id', user.id)` en lugar del id numérico de perfiles.
+
+**Verificación inmediata:**
+1. Iniciar el servidor de Next.js en entorno local o vista previa.
+2. Hacer login con `admin2.dev@gmail.com`.
+3. Navegar por el CRM y confirmar que los datos se cargan correctamente sin errores 500.
+
+---
+
+## 🚦 Bloque 4: La Caída del Fallback (Base de Datos)
+
+**Acción:**
+Ejecutar un script SQL que:
+1. Reemplace la función de base de datos `get_my_company_id()` para que extraiga el `company_id` consultando `profiles` a través del `auth.uid()`.
+2. Actualice (o reemplace) cualquier política de seguridad (RLS) que todavía dependa de una lógica insegura.
+3. **Punto sin retorno:** Borre cualquier línea de código en Next.js donde diga `company_id || 1`.
+
+**Verificación inmediata (Criterio de Cierre de Fase 4):**
+1. Insertar un lead de prueba desde el CRM con el usuario `admin2`. Debe guardarse en base de datos con `company_id = 1`.
+2. Crear un segundo usuario de prueba desde Supabase inyectando un `company_id` distinto. Iniciar sesión y confirmar que NO ve los leads de la empresa 1.
+3. El sistema RLS es impenetrable y el fallback numérico dejó de existir en todo el proyecto.
+
+---
+
+## 🛟 Rollback Plan (En caso de emergencia)
+
+Si durante la ejecución de los bloques surge algún error catastrófico (ej. los usuarios dejan de poder loguearse o el sistema colapsa), el procedimiento exacto para volver al estado anterior es:
+
+1. **Revertir Bloque 4:** Deshacer el borrado del fallback `company_id || 1` en el código de Next.js mediante `git checkout` o revirtiendo el commit.
+2. **Revertir RLS:** Restaurar las políticas RLS y la función `get_my_company_id()` a su versión basada en `company_id = 1` o en la lectura manual de profiles.
+3. **Revertir Trigger (Bloque 2B):** Ejecutar en Supabase:
+   ```sql
+   DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+   DROP FUNCTION IF EXISTS public.handle_new_auth_user() CASCADE;
+   ```
+4. Con esto, el sistema vuelve a comportarse exactamente igual que al inicio de la Fase 4.

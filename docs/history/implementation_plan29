@@ -1,0 +1,194 @@
+# FASE 4 — Seguridad y Control de Acceso (Cierre Completo)
+
+## Objetivo
+
+Auditar, reforzar y cerrar definitivamente la seguridad del sistema FAIREX CRM sin romper ninguna funcionalidad existente. El foco es:  base de datos (RLS), middleware (Next.js), consultas SQL, roles, y exposición de datos sensibles.
+
+---
+
+## Auditoría de Estado Actual
+
+### Tablas identificadas en Supabase
+
+| Tabla | RLS Habilitado (en migración) | Policies existentes | Estado |
+|---|---|---|---|
+| `profiles` | ✅ Sí | SELECT own, UPDATE own | Parcial — falta INSERT (onboarding) |
+| `companies` | ✅ Sí | SELECT own | Parcial — falta protección admin |
+| `lead_memory` | ✅ Sí | SELECT company, UPDATE company | Parcial — falta INSERT policy |
+| `n8n_chat_histories` | ✅ Sí | SELECT company | Bien — read-only para usuarios |
+| `company_members` | ❌ **No** | Ninguna | **RIESGO CRÍTICO** |
+| `tasks` | ❌ **No** | Ninguna | **RIESGO ALTO** |
+| `notifications` | ❌ **No** | Ninguna | **RIESGO ALTO** |
+| `company_settings` | ❌ **No** | Ninguna | **RIESGO ALTO** |
+| `clientes` | ❌ **No** | Ninguna | **RIESGO ALTO** |
+| `conversaciones` | ❌ **No** | Ninguna | **RIESGO ALTO** |
+
+### Riesgos identificados
+
+#### 🔴 CRÍTICO
+1. **`company_members` sin RLS** — Un usuario autenticado podría leer todos los miembros de todas las empresas o escalar privilegios modificando su propio `role` en `company_members`.
+2. **Fallback `company_id = 1`** en `queries.ts` — Si un usuario no tiene perfil, todas las queries caen al `company_id = 1` (la empresa por defecto). Esto podría exponer datos de otra empresa.
+3. **`get_my_company_id()` retorna `bigint` pero `companies.id` es `UUID`** — El tipo no coincide. La función en la migración fase 4 hace `SELECT company_id FROM profiles WHERE id = auth.uid()` y retorna `bigint`, pero la tabla `companies` fue creada con `UUID PRIMARY KEY`. **Esto rompe todas las policies de `companies`** en el schema actual.
+
+#### 🟠 ALTO
+4. **`tasks`, `notifications`, `company_settings`, `clientes`, `conversaciones` sin RLS** — Cualquier usuario autenticado con conocimiento de IDs puede acceder a datos de otra empresa vía `anon key`.
+5. **Middleware con bypass total** — Si `NEXT_PUBLIC_SUPABASE_URL` no está definido, el middleware redirige directamente al dashboard sin autenticación (líneas 6-13 de `src/middleware.ts`). En producción esto no aplica, pero es un riesgo en staging.
+6. **Dashboard Layout sin verificación de sesión server-side** — El `layout.tsx` del dashboard no verifica la sesión; delega todo al middleware. Si el middleware falla, las páginas quedan expuestas.
+7. **`profiles` INSERT no cubierto por RLS** — No hay policy `INSERT` para `profiles`. Supabase bloquea inserts de usuarios autenticados a su propio perfil (necesario en onboarding).
+
+#### 🟡 MEDIO
+8. **`anon key` expuesta en `.env.local`** — La `NEXT_PUBLIC_SUPABASE_ANON_KEY` tiene el prefijo `sb_publishable_` lo que confirma que es la `anon key` pública. Esto es correcto por diseño de Supabase, pero debe validarse que RLS esté correctamente configurado para que el `anon` rol no pueda leer datos.
+9. **`get_my_company_id()` sin manejo de tipo `NULL`** — Si el usuario no tiene perfil, la función retorna `NULL`. Las policies USING fallan silenciosamente devolviendo 0 filas en vez de error. No expone datos, pero puede generar confusión de debugging.
+10. **Supabase Storage** — No se han encontrado referencias a Storage en el código. No hay archivos subidos actualmente identificados. No hay riesgo inmediato, pero debe confirmarse que los buckets (si existen) tengan policies.
+11. **Roles no implementados a nivel de aplicación** — La tabla `company_members` tiene un campo `role TEXT`, pero el dashboard no diferencia vistas ni endpoints por rol. El sistema de permisos por rol (Owner, Ventas, Marketing, Operaciones) está diseñado en la arquitectura pero no implementado.
+
+---
+
+## Plan de Implementación por Bloques
+
+### BLOQUE 1 — Corrección de tipos y función maestra (Pre-condición)
+
+**Impacto esperado:** Bajo riesgo. Corrige un bug silencioso de tipo `bigint` vs `UUID` que impide que las policies de `companies` funcionen.
+
+#### [MODIFY] `migration_fase4b_fix_types.sql` [NEW]
+- Detectar si `profiles.company_id` es `bigint` o `UUID` y alinear.
+- Recrear `get_my_company_id()` con el tipo correcto.
+- Agregar `get_my_role()` helper function para políticas de rol futuras.
+
+---
+
+### BLOQUE 2 — RLS para tablas sin cobertura (Core)
+
+**Impacto esperado:** Después de activar RLS en las tablas restantes, N8N seguirá operando sin restricciones porque usa `service_role` (que bypassa RLS). Los usuarios del dashboard verán solo sus propios datos.
+
+#### [NEW] `migration_fase4b_rls_missing_tables.sql`
+Tablas a cubrir:
+- `company_members` — SELECT/UPDATE con filtro `company_id = get_my_company_id()` y protección anti-escalación de rol.
+- `tasks` — SELECT/INSERT/UPDATE con filtro `company_id`.
+- `notifications` — SELECT/UPDATE (mark as read) filtrado por `user_id` del member.
+- `company_settings` — SELECT solo para miembros de la empresa, UPDATE solo para admin/owner.
+- `clientes` — SELECT/INSERT/UPDATE filtrado por `company_id`.
+- `conversaciones` — SELECT/INSERT/UPDATE filtrado por `company_id`.
+
+---
+
+### BLOQUE 3 — Policies INSERT faltantes en tablas existentes
+
+**Impacto esperado:** Bajo. Permite que el flujo de onboarding (creación de perfil propio) funcione correctamente.
+
+#### [MODIFY] Migración complementaria a `migration_phase_4_rls.sql`
+- `profiles` INSERT policy: solo permite insertar si `id = auth.uid()`.
+- `company_members` INSERT: solo admin/owner de la empresa puede agregar miembros.
+
+---
+
+### BLOQUE 4 — Protección anti-escalación de privilegios
+
+**Impacto esperado:** Medio. Requiere que el campo `role` en `company_members` no pueda ser modificado por el propio usuario.
+
+#### [NEW] En la migración SQL
+- Policy `company_members` UPDATE: un usuario puede actualizar sus propios datos **excepto** el campo `role`.
+- Crear función `is_company_admin()` que retorna `true` si el usuario tiene `role IN ('admin', 'owner')` en la empresa actual.
+- Policy UPDATE de `role` solo permitida para admins.
+
+---
+
+### BLOQUE 5 — Middleware y protección de rutas (Next.js)
+
+**Impacto esperado:** Bajo. El middleware actual funciona correctamente en producción. Se fortalece con una segunda capa de verificación en el server component del dashboard layout.
+
+#### [MODIFY] `src/middleware.ts`
+- Remover el bloque de bypass (líneas 5-13) que salta autenticación cuando no hay variables de entorno. En producción este código nunca se ejecuta, pero es un riesgo de seguridad latente.
+- Agregar ruta `/` para redirigir a `/login` si no hay sesión.
+
+#### [MODIFY] `src/app/(dashboard)/layout.tsx`  
+- Convertir a Server Component (ya lo es implícitamente).
+- Agregar verificación de sesión server-side antes de renderizar.
+- Si no hay sesión, redirigir a `/login`.
+
+---
+
+### BLOQUE 6 — Corrección del fallback `company_id = 1`
+
+**Impacto esperado:** Bajo riesgo de ruptura. El fallback a `1` puede exponer datos si `company_id = 1` pertenece a una empresa real. RLS debe ser la defensa principal.
+
+#### [MODIFY] `src/lib/services/queries.ts`
+- Función `getUserCompanyId()`: en lugar de devolver `1` como fallback, lanzar un error controlado o retornar `null`, forzando al caller a manejar el caso de usuario sin perfil.
+- Las funciones de query deben devolver arreglos vacíos (no errores) cuando no hay sesión o companyId.
+
+---
+
+### BLOQUE 7 — Verificación de Storage
+
+**Impacto esperado:** Ninguno si no hay buckets. Verificar existencia y configurar si es necesario.
+
+- Consultar la API de Supabase para listar buckets existentes.
+- Si hay buckets, verificar que tengan policies RLS apropiadas.
+
+---
+
+### BLOQUE 8 — Roles en aplicación (base)
+
+**Impacto esperado:** Sin cambio de UI. Solo implementa la lectura del rol del usuario actual y lo expone en el contexto de la aplicación.
+
+#### [MODIFY] `src/components/providers/DataProvider.tsx`
+- Además de cargar usuario, cargar `role` del usuario desde `company_members`.
+- Almacenar en el store para uso futuro.
+
+#### [MODIFY] `src/lib/store.ts`
+- Agregar campo `role: string | null` a `UserProfile`.
+
+---
+
+## Verificación por Bloque
+
+Cada bloque termina con una pausa de validación:
+1. **BLOQUE 1**: Verificar que `get_my_company_id()` retorna el `company_id` correcto para el usuario de prueba.
+2. **BLOQUE 2**: Verificar que el dashboard sigue cargando datos correctamente (RLS permite SELECT).
+3. **BLOQUE 3**: Verificar que el flujo de login/onboarding no falla.
+4. **BLOQUE 4**: Verificar que un usuario no puede cambiar su propio rol.
+5. **BLOQUE 5**: Verificar que rutas protegidas redirigen a `/login` sin sesión.
+6. **BLOQUE 6**: Verificar que la app funciona normalmente con usuario autenticado.
+7. **BLOQUE 7**: Confirmar estado de Storage.
+8. **BLOQUE 8**: Verificar que el rol se carga en el store.
+
+---
+
+## Archivos a Crear/Modificar
+
+### Nuevos archivos SQL (Migraciones)
+- **[NEW]** `supabase/migrations/migration_fase4b_fix_and_complete.sql` — Migración completa de FASE 4B con todos los bloques SQL.
+
+### Archivos de Aplicación Modificados
+- **[MODIFY]** `src/middleware.ts` — Eliminar bypass inseguro, fortalecer rutas.
+- **[MODIFY]** `src/app/(dashboard)/layout.tsx` — Agregar verificación server-side.
+- **[MODIFY]** `src/lib/services/queries.ts` — Eliminar fallback inseguro `company_id = 1`.
+- **[MODIFY]** `src/components/providers/DataProvider.tsx` — Cargar rol del usuario.
+- **[MODIFY]** `src/lib/store.ts` — Agregar campo `role` en UserProfile.
+
+---
+
+## Preguntas Abiertas
+
+> [!IMPORTANT]
+> **Pregunta 1 — Tipo de `company_id` en producción**  
+> La migración inicial (`0001_fairex_v2_init.sql`) crea `companies.id` como `UUID`. La fase 3 intenta insertar `id = 1` (entero). En producción, ¿el campo `id` de `companies` quedó como `UUID` o como `BIGINT/SERIAL`? Esto es crítico para saber qué tipo tiene `profiles.company_id` y si `get_my_company_id()` necesita retornar `UUID` o `bigint`.  
+> **Recomendación:** Verificar en el panel de Supabase la definición real de la tabla antes de ejecutar cualquier migración.
+
+> [!IMPORTANT]  
+> **Pregunta 2 — N8N `service_role` key**  
+> La arquitectura indica que N8N usa `service_role` para bypasear RLS. ¿Está configurado así en producción? Si N8N usa la `anon key`, el RLS nuevo lo bloqueará. Si usa `service_role`, está protegido por diseño.
+
+> [!WARNING]
+> **Pregunta 3 — Usuarios existentes sin perfil en `profiles`**  
+> Si hay usuarios en `auth.users` sin fila correspondiente en `profiles`, el fallback actual a `company_id = 1` puede estar "funcionando" para ellos. Al eliminar el fallback, estos usuarios verán el dashboard vacío. ¿Hay que crear perfiles retroactivamente?
+
+---
+
+## Plan de Validación Final
+
+Después de todos los bloques, se generará un **Informe de Seguridad Final** que incluirá:
+- Lista de riesgos previos y estado (corregido / mitigado / aceptado).
+- Políticas RLS implementadas por tabla.
+- Nivel de seguridad alcanzado.
+- Recomendaciones para la siguiente fase.

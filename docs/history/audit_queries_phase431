@@ -1,0 +1,150 @@
+# Auditoría Pre-Migración — FASE 4 (Completa)
+
+Por favor, ejecuta las siguientes consultas en el **SQL Editor** de tu panel de Supabase y envíame los resultados y confirmaciones. Una vez que tengamos esta información, consideraré terminada la auditoría y pasaremos al primer bloque de implementación.
+
+---
+
+### 1. Verificar tipos de datos (`companies.id` y `profiles.company_id`)
+
+Confirma si debemos reescribir la función `get_my_company_id()` para devolver `UUID` o `BIGINT`.
+
+```sql
+SELECT 
+    table_name, 
+    column_name, 
+    data_type 
+FROM 
+    information_schema.columns 
+WHERE 
+    table_schema = 'public'
+    AND table_name IN ('companies', 'profiles') 
+    AND column_name IN ('id', 'company_id')
+ORDER BY 
+    table_name, column_name;
+```
+
+---
+
+### 2. Verificar usuarios huérfanos (Autenticados sin perfil)
+
+Revisa si hay usuarios que dependen del fallback `company_id = 1`.
+
+```sql
+SELECT 
+    au.id AS auth_user_id,
+    au.email,
+    au.created_at,
+    p.id AS profile_id
+FROM 
+    auth.users au
+LEFT JOIN 
+    public.profiles p ON au.id = p.id
+WHERE 
+    p.id IS NULL;
+```
+
+---
+
+### 3. Inventario Global de Tablas, `company_id` y RLS
+
+Esta consulta lista todas las tablas del esquema `public` indicando si tienen la columna `company_id`, si RLS está habilitado y cuántas políticas RLS tienen asociadas.
+
+```sql
+SELECT 
+    t.tablename,
+    EXISTS (
+        SELECT 1 
+        FROM information_schema.columns c 
+        WHERE c.table_schema = 'public' 
+          AND c.table_name = t.tablename 
+          AND c.column_name = 'company_id'
+    ) AS has_company_id,
+    c.relrowsecurity AS rls_enabled,
+    c.relforcerowsecurity AS rls_forced,
+    (SELECT COUNT(*) FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = t.tablename) AS policy_count
+FROM 
+    pg_tables t
+JOIN 
+    pg_class c ON c.relname = t.tablename
+JOIN 
+    pg_namespace n ON n.oid = c.relnamespace
+WHERE 
+    t.schemaname = 'public'
+    AND n.nspname = 'public'
+ORDER BY 
+    t.tablename;
+```
+
+---
+
+### 4. Inventario de Foreign Keys (Consistencia Multiempresa)
+
+Esta consulta revisa todas las llaves foráneas que apuntan o salen de `companies` y `profiles` para confirmar que las relaciones de la Fase 3 son correctas.
+
+```sql
+SELECT
+    tc.table_name AS table_name,
+    kcu.column_name AS column_name,
+    ccu.table_name AS foreign_table_name,
+    ccu.column_name AS foreign_column_name,
+    rc.update_rule AS on_update,
+    rc.delete_rule AS on_delete
+FROM 
+    information_schema.table_constraints AS tc 
+JOIN information_schema.key_column_usage AS kcu
+    ON tc.constraint_name = kcu.constraint_name
+    AND tc.table_schema = kcu.table_schema
+JOIN information_schema.constraint_column_usage AS ccu
+    ON ccu.constraint_name = tc.constraint_name
+    AND ccu.table_schema = tc.table_schema
+JOIN information_schema.referential_constraints AS rc
+    ON tc.constraint_name = rc.constraint_name
+WHERE 
+    tc.constraint_type = 'FOREIGN KEY'
+    AND tc.table_schema = 'public'
+    AND (ccu.table_name IN ('companies', 'profiles') OR tc.table_name IN ('companies', 'profiles'))
+ORDER BY 
+    foreign_table_name, table_name;
+```
+
+---
+
+### 5. Backup del estado actual (Esquema, Funciones y Policies)
+
+Ejecuta esta consulta y **guarda los resultados de forma local** como plan de reversión.
+
+```sql
+-- 1. Respaldar Políticas RLS actuales
+SELECT 
+    schemaname,
+    tablename,
+    policyname,
+    roles,
+    cmd,
+    qual AS using_expression,
+    with_check AS with_check_expression
+FROM 
+    pg_policies
+WHERE 
+    schemaname = 'public';
+
+-- 2. Respaldar Función Actual
+SELECT 
+    proname AS function_name, 
+    pg_get_functiondef(oid) AS function_definition
+FROM 
+    pg_proc 
+WHERE 
+    proname = 'get_my_company_id';
+```
+
+---
+
+### 6. Verificación de N8N (`service_role` vs `anon`)
+
+**Acción requerida (Manual):**
+Revisa la configuración de conexión a Supabase en tus flujos de N8N.
+- Si la clave que usa empieza con `eyJ...` y al revisar los settings de Supabase sabes que corresponde a `service_role secret`, el RLS **no bloqueará** a N8N.
+- Si usa `sb_publishable_` (anon key), el nuevo RLS bloqueará las lecturas/inserciones desde N8N y debemos configurar `service_role` en tus nodos.
+
+**Por favor envíame los resultados tabulados de los puntos 1 al 4 y la confirmación del punto 6.**

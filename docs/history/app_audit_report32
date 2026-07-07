@@ -1,0 +1,79 @@
+# Auditoría de Capa de Aplicación (Next.js) — FASE 4
+
+## 1. Tablas consultadas desde el Dashboard
+
+Tras analizar todo el código fuente (`src/app`, `src/components`, `src/lib`), este es el estado del acceso a datos desde el frontend:
+
+| Tabla | Acceso Directo a DB (Supabase) | Manejo Actual en Dashboard |
+|---|---|---|
+| `lead_memory` | ✅ Sí (`getLeadsData`, `getLeadMemory`) | Alimenta la lista de leads principal. |
+| `n8n_chat_histories` | ✅ Sí (`getChatHistory`) | Alimenta el historial de mensajes del chat. |
+| `profiles` | ✅ Sí (`getUserCompanyId`) | Se consulta en cada petición al backend. |
+| `tasks` | ❌ No | Manejado 100% en Zustand (`src/lib/store.ts`). |
+| `notifications` | ❌ No | Manejado 100% en Zustand (`src/lib/store.ts`). |
+| `company_settings` | ❌ No | Datos mockeados / store local. |
+| `clientes` | ❌ No | No se usa directamente en V2 (se usa `lead_memory`). |
+| `conversaciones` | ❌ No | No se usa directamente en V2 (se usa `n8n_chat_histories`). |
+
+**Conclusión:** Las políticas RLS en las tablas nuevas/secundarias (`tasks`, `notifications`, etc.) **no romperán** la UI del dashboard porque actualmente el frontend no hace `supabase.from()` hacia ellas. Todo el riesgo de ruptura se concentra en `lead_memory`, `n8n_chat_histories` y `profiles`.
+
+---
+
+## 2. Dependencias del fallback `company_id = 1`
+
+En `src/lib/services/queries.ts`, la función `getUserCompanyId(supabase)` actúa como interceptor para todas las consultas. Si el usuario no tiene sesión o no existe en `profiles`, devuelve `1`.
+
+Las funciones que actualmente dependen de este fallback y que se verán afectadas al eliminarlo son:
+
+1. `getLeadsData()` — Utilizada por `DataProvider.tsx` para cargar todo el dashboard.
+2. `getLeadMemoryTest()` — Función de prueba de lectura.
+3. `updateLeadEstado()` — Acción para marcar leads como ACTIVO/EXCLUIR.
+4. `getChatHistory(numero)` — Carga el chat en vivo de un lead.
+5. `getLeadMemory(id)` — Carga el panel lateral derecho del chat (necesidades, objeciones).
+
+**Riesgo:** Al eliminar el fallback `1` y cambiarlo por `null` o un error, si un usuario auténtico se loguea pero **no tiene registro en la tabla `profiles`**, todas estas 5 funciones fallarán y el dashboard cargará completamente en blanco.
+
+---
+
+## 3. Rutas en peligro tras activar RLS (Puntos de Ruptura)
+
+| Ruta / Componente | Causa de posible ruptura | Solución requerida |
+|---|---|---|
+| **Flujo de Onboarding / Creación de Perfil** | `profiles` RLS no permite `INSERT` a usuarios sin perfil. | Se debe agregar la política `INSERT` en el Bloque 3 antes de lanzar usuarios. |
+| **`DataProvider.tsx` (Dashboard global)** | Si `getLeadsData()` arroja un error 500 al no encontrar `company_id`, el layout puede romperse. | Las consultas deben devolver `[]` vacío suavemente en vez de lanzar error si no hay `company_id`. |
+| **Middlewares y Protección de Rutas** | Bypass inseguro en `middleware.ts` (líneas 5-13). Si se elimina y no hay validación server-side, fallan redirecciones. | Ya contemplado en el Bloque 5. |
+
+---
+
+## 4. Consultas que deben adaptarse (Acción requerida en Bloque 6)
+
+Antes de activar el RLS estricto, debemos refactorizar `src/lib/services/queries.ts` para que sea "RLS-ready". Las siguientes adaptaciones se implementarán en el Bloque 6:
+
+1. **Eliminar el fallback en `getUserCompanyId`:**
+   ```typescript
+   // Actual (Inseguro)
+   if (error || !data) return 1
+   // Nuevo (RLS-Ready)
+   if (error || !data) return null
+   ```
+
+2. **Manejo temprano de nulls en las 5 funciones:**
+   ```typescript
+   const companyId = await getUserCompanyId(supabase)
+   if (!companyId) return { leads: [], conversations: [] } // Retorno seguro
+   ```
+
+3. **Inyectar el rol de usuario en `DataProvider.tsx`:**
+   Actualmente solo extrae nombre e iniciales. Necesitamos que extraiga el rol real leyendo de `company_members` para poder habilitar las vistas condicionadas por rol en el futuro.
+
+---
+
+### Conclusión Final de Auditoría
+
+El sistema está listo para la FASE 4. Hemos identificado exactamente qué código puede romperse y por qué. 
+
+Dado que gran parte del estado actual (tareas, notificaciones) vive en el frontend (`store.ts`) y no consulta la base de datos, **el riesgo de romper la UI al activar el RLS en esas tablas es NULO**. 
+
+El verdadero cuidado debe estar en la tabla `profiles` y en la función `getUserCompanyId`.
+
+Puedes proceder a revisar los datos del SQL Editor. Cuando estés listo, ejecutaremos el **Bloque 1**.

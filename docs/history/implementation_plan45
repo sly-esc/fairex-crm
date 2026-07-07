@@ -1,0 +1,36 @@
+# Instalación de Row Level Security (Bloque 4)
+
+Este bloque instala la capa de seguridad RLS desde cero en Supabase y elimina definitivamente los fallbacks temporales en Next.js.
+
+## Auditoría Previa (Resumen)
+- **Estado Actual:** RLS no está activo en producción. La migración `migration_phase_4_rls.sql` existe pero nunca fue ejecutada.
+- **Deuda Técnica:** El archivo SQL actual asume erróneamente que `profiles.id` es un UUID, lo que rompería el acceso si se instalara tal cual.
+- **Next.js:** `queries.ts` mantiene el `return 1` silencioso como red de seguridad.
+
+## Proposed Changes
+
+### 1. Base de Datos (Supabase)
+Actualizaremos el script `migration_phase_4_rls.sql` para que las comparaciones usen correctamente `auth_user_id`.
+
+#### [MODIFY] [migration_phase_4_rls.sql](file:///c:\Users\admin\Desktop\FAIREX-AI-BUSINESS-OS\supabase\migrations\migration_phase_4_rls.sql)
+- Línea 22: `WHERE id = auth.uid();` ➔ `WHERE auth_user_id = auth.uid();`
+- Línea 55: `USING (id = auth.uid());` ➔ `USING (auth_user_id = auth.uid());`
+- Línea 60: `USING (id = auth.uid())` ➔ `USING (auth_user_id = auth.uid())`
+- Línea 61: `WITH CHECK (id = auth.uid());` ➔ `WITH CHECK (auth_user_id = auth.uid());`
+
+### 2. Next.js (Aplicación)
+Eliminaremos la red de seguridad ahora que RLS se encarga del aislamiento estricto.
+
+#### [MODIFY] [queries.ts](file:///c:\Users\admin\Desktop\FAIREX-AI-BUSINESS-OS\src\lib\services\queries.ts)
+- Eliminar el `return 1` de la línea 24 (cuando no hay sesión activa), lanzando un error o retornando `null` para que Next.js expulse al usuario.
+- Eliminar el `return 1` de las líneas 32 y 34 (cuando falla la lectura del perfil), dejando que falle explícitamente.
+
+> [!WARNING]  
+> Eliminar estos fallbacks significa que la aplicación fallará visiblemente (Zero Trust) si un usuario logra iniciar sesión pero no tiene perfil, o si se consulta data sin sesión activa.
+
+## Verification Plan
+
+### Manual Verification
+1. **Verificar RLS (Admin):** Entrar al dashboard de Supabase y validar que las políticas aparecen habilitadas para `companies`, `profiles`, `lead_memory` y `n8n_chat_histories`.
+2. **Prueba Positiva:** Loguearse como `admin2.dev@gmail.com` y comprobar que el sistema sigue cargando los leads del tenant 1 de forma impecable, ahora gobernado 100% por RLS en vez del fallback.
+3. **Prueba Negativa:** Intentar crear un usuario huérfano sin `company_id` (o tratar de consultar data directamente vía REST simulando otro tenant) y verificar que RLS devuelve 0 resultados.

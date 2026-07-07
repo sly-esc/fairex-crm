@@ -1,0 +1,94 @@
+# Auditoría Pre-Migración — FASE 4
+
+Por favor, ejecuta las siguientes consultas en el **SQL Editor** de tu panel de Supabase para obtener la información crítica antes de proceder.
+
+---
+
+### 1. Verificar tipos de datos (`companies.id` y `profiles.company_id`)
+
+Ejecuta esta consulta para confirmar de qué tipo son exactamente las columnas de relación. Esto nos dirá si debemos reescribir la función `get_my_company_id()` para devolver `UUID` o `BIGINT`.
+
+```sql
+SELECT 
+    table_name, 
+    column_name, 
+    data_type 
+FROM 
+    information_schema.columns 
+WHERE 
+    table_name IN ('companies', 'profiles') 
+    AND column_name IN ('id', 'company_id');
+```
+
+**Por favor, copia y pega el resultado de esta consulta aquí.**
+
+---
+
+### 2. Verificar usuarios huérfanos (Autenticados sin perfil)
+
+Esta consulta revisará la tabla del sistema `auth.users` y la comparará con tu tabla `profiles` para ver si hay usuarios que dependen del fallback `company_id = 1`.
+
+```sql
+SELECT 
+    au.id AS auth_user_id,
+    au.email,
+    au.created_at,
+    p.id AS profile_id
+FROM 
+    auth.users au
+LEFT JOIN 
+    public.profiles p ON au.id = p.id
+WHERE 
+    p.id IS NULL;
+```
+
+**Si esta consulta devuelve 0 filas**, significa que todos los usuarios tienen perfil y podemos eliminar el fallback de manera segura. Si devuelve filas, pégalas aquí para evaluar el impacto.
+
+---
+
+### 3. Verificación de N8N (`service_role` vs `anon`)
+
+Dado que N8N se conecta desde fuera, la forma más segura de verificarlo es revisando **las variables de entorno en tu instancia de N8N** (o en el nodo de Supabase dentro de tus flujos de N8N).
+
+Debes buscar el nodo de conexión a Supabase (o las cabeceras HTTP si usas nodos HTTP) y verificar la clave que se está utilizando:
+
+- Si empieza con `eyJ...` y contiene `service_role` al decodificarla (o sabes que copiaste la `service_role secret` de los settings de Supabase), entonces **está usando service_role** y el nuevo RLS no afectará a N8N.
+- Si empieza con `sb_publishable_` o `eyJ...` conteniendo `anon`, entonces **está usando anon key** y el nuevo RLS bloqueará las inserciones/lecturas de N8N.
+
+**Acción requerida:** Revisa la configuración del nodo de Supabase en tu flujo principal de N8N y confírmame qué tipo de clave utiliza.
+
+---
+
+### 4. Backup del estado actual (Esquema, Funciones y Policies)
+
+Ejecuta esta consulta y **guarda los resultados** en un archivo de texto. Esta consulta extrae todas las políticas RLS actuales y la definición de la función maestra para que tengamos un respaldo en caso de requerir rollback.
+
+```sql
+-- 1. Respaldar Políticas RLS actuales
+SELECT 
+    schemaname,
+    tablename,
+    policyname,
+    roles,
+    cmd,
+    qual AS using_expression,
+    with_check AS with_check_expression
+FROM 
+    pg_policies
+WHERE 
+    schemaname = 'public';
+
+-- 2. Respaldar Función Actual
+SELECT 
+    proname AS function_name, 
+    pg_get_functiondef(oid) AS function_definition
+FROM 
+    pg_proc 
+WHERE 
+    proname = 'get_my_company_id';
+```
+
+---
+
+### Próximos pasos
+Una vez que me proporciones los resultados de los puntos 1, 2 y 3, analizaré la información y generaré el **Bloque 1** de la migración de forma 100% segura. No avanzaremos hasta que confirmemos estos datos.

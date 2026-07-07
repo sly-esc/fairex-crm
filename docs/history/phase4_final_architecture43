@@ -1,0 +1,223 @@
+# FAIREX Business OS — Arquitectura Oficial Fase 4
+> Documento de referencia definitivo. Todas las decisiones aquí registradas están **aprobadas y son inamovibles** para las fases presentes y futuras. No deben ser discutidas nuevamente salvo decisión explícita documentada por el equipo técnico.
+
+---
+
+## 1. Principio Fundacional: Multitenancy por `company_id`
+
+**Todo el Business OS gira en torno a un único eje: el `company_id`.**
+
+- Cualquier tabla actual (perfiles, leads, conversaciones) o futura (inventario, tareas, base de conocimiento, agentes de IA) debe tener una FK obligatoria hacia `companies(id)`.
+- El aislamiento de datos entre empresas se garantiza exclusivamente mediante políticas RLS (Row Level Security) basadas en `company_id`.
+- No existe ningún mecanismo de acceso entre tenants. Nunca se cruzan datos de diferentes empresas.
+
+---
+
+## 2. Decisiones Aprobadas e Inamovibles
+
+| # | Decisión | Justificación |
+|---|---|---|
+| D-01 | `profiles.id` permanece como `BIGINT` | Compatibilidad con N8N y datos operacionales existentes |
+| D-02 | `profiles.auth_user_id` (UUID) es el puente con `auth.users` | Separa la identidad de auth del id operacional |
+| D-03 | El trigger `on_auth_user_created` tiene responsabilidad única: crear `profiles` | Principio de Responsabilidad Única. No contiene lógica de negocio. |
+| D-04 | `company_id` y `role` se envían en `raw_user_meta_data` al crear el usuario | Contrato explícito entre el orquestador (Next.js) y el motor de identidad (Supabase) |
+| D-05 | El fallback estático `company_id = 1` será eliminado en el Bloque 4 | Fue una solución temporal que ocultaba la ausencia del trigger |
+| D-06 | Next.js es el orquestador del onboarding y el único que posee credenciales Admin de Supabase | Centraliza la lógica de negocio y la validación comercial |
+| D-07 | n8n no detecta cambios en DB; recibe un Webhook explícito desde Next.js | Separación limpia entre orquestación y ejecución asíncrona |
+| D-08 | El trigger NO crea empresas, configuraciones, módulos de IA ni integraciones | Responsabilidad única inamovible |
+| D-09 | `audit_logs`, `company_settings` y `company_integrations` son responsabilidad del proceso de onboarding, no del trigger | Evita acoplar el motor de identidad con el motor de negocio |
+| D-10 | `DROP FUNCTION` sin `CASCADE` salvo que exista dependencia explícita documentada | Seguridad: no eliminar dependencias silenciosamente |
+
+---
+
+## 3. Estado del Sistema en el Punto de Partida
+
+| Elemento | Estado |
+|---|---|
+| `profiles` existe en `public` | ✅ |
+| `profiles` tiene registros | ❌ 0 filas (era esperado, sin trigger) |
+| Columna `auth_user_id` en `profiles` | ✅ Añadida en Bloque 1 |
+| Trigger en `auth.users` | ❌ No existía — causa raíz identificada |
+| Usuario `admin2.dev@gmail.com` en `auth.users` | ✅ UUID: `8c4d313a-41a4-467c-996b-aca1c8fcd2a1` |
+| Registro `companies.id = 1` | ✅ Existe (columnas: id, created_at, nombre, email, telefono, plan, estado) |
+| Fallback `company_id = 1` activo en Next.js | ⚠️ Todavía activo — se eliminará en Bloque 4 |
+
+---
+
+## 4. Responsabilidades por Capa
+
+| Componente | Rol | Lo que NO hace |
+|---|---|---|
+| **Next.js (Admin API / Server Actions)** | **Orquestador Comercial.** Valida el estado, crea la empresa, invoca `auth.admin.createUser()` con el contrato de metadata e invoca el Webhook de n8n cuando corresponde. | No guarda credenciales de terceros. No ejecuta aprovisionamiento directamente. |
+| **Supabase (Trigger + RLS)** | **Guardián de Identidad.** El trigger crea `profiles`. RLS aísla los datos por `company_id`. | No orquesta servicios externos. No crea empresas ni configuraciones. |
+| **n8n (Workflows)** | **Motor de Aprovisionamiento.** Recibe el Webhook de Next.js y ejecuta en background: YCloud, Pinecone, `company_settings`, `company_integrations`. | No decide cuándo provisionar. No genera identidades. No toca `auth.users`. |
+
+---
+
+## 5. Ciclo de Vida de la Empresa
+
+| Estado | Significado | Acceso al sistema |
+|---|---|---|
+| `draft` | Cliente existe comercialmente, sin setup técnico | Bloqueado |
+| `pending` | Datos capturados, validación de pago en proceso | Solo pantalla de espera |
+| `provisioning` | n8n ejecutando aprovisionamiento | Dashboard con progreso |
+| `active` | Empresa operando con normalidad | Acceso completo por RLS y rol |
+| `suspended` | Inactividad, falta de pago o baneo | Solo lectura o denegado |
+
+---
+
+## 6. Arquitectura de Datos Perimetral
+
+La tabla `companies` mantiene únicamente datos de identidad de nivel superior. El contexto operativo se delega a tablas especializadas.
+
+### A. `company_settings` — Configuración Central
+Creada en Fase 1 ó 3 del onboarding. **No** la crea el trigger.
+- `company_id` (PK, FK)
+- `branding` (JSONB: logo, colores, dominio personalizado)
+- `ai_preferences` (JSONB: tono de voz, instrucciones globales del bot)
+- `timezone`, `locale`
+- `features_enabled` (JSONB: flags de módulos activos por plan)
+
+### B. `company_integrations` — Proveedores Externos
+Permite cambiar de proveedor sin tocar el core.
+- `id` (PK)
+- `company_id` (FK)
+- `provider` (Enum: `ycloud`, `meta`, `shopify`, `woocommerce`, `openai`)
+- `credentials` (JSONB encriptado / Vault)
+- `status` (Enum: `connected`, `error`, `syncing`)
+- `last_sync_at` (Timestamptz)
+
+### C. `audit_logs` — Trazabilidad (Fase Futura)
+Historial inmutable de eventos críticos del sistema. No se implementa ahora.
+- `id` (UUID, PK)
+- `company_id` (FK)
+- `actor_id` (FK a `profiles` o literal `'system'`)
+- `action` (Enum: `company_created`, `user_invited`, `settings_changed`, etc.)
+- `metadata` (JSONB con el delta del cambio)
+- `created_at` (Timestamptz)
+
+---
+
+## 7. Flujo de Onboarding Definitivo
+
+### Fase 0: Pre-Onboarding (Draft)
+El equipo de ventas o el sistema de pagos crea el registro en `companies` con `status = 'draft'`.
+
+### Fase 1: Transición a Provisioning
+**Actor: Next.js**
+Se completa el formulario de setup. Next.js cambia `companies.status = 'provisioning'`.
+
+### Fase 2: Creación de la Identidad
+**Actor: Next.js → Supabase Auth → Trigger**
+1. Next.js llama a `supabase.auth.admin.createUser()`.
+2. Inyecta el contrato: `raw_user_meta_data: { company_id: X, role: 'owner' }`.
+3. El trigger `handle_new_auth_user()` valida el `company_id`, verifica su existencia en `companies`, e inserta el registro en `profiles` atómicamente.
+
+### Fase 3: Aprovisionamiento (Asíncrono)
+**Actor: Next.js → n8n**
+1. Next.js invoca explícitamente el Webhook de n8n con el payload de la empresa.
+2. n8n provisiona YCloud (WhatsApp), configura el namespace en Pinecone (IA), inicializa `company_settings` y `company_integrations`.
+3. Al finalizar, n8n actualiza `companies.status = 'active'`.
+
+### Fase 4: Operación y RLS
+El cliente hace login. El JWT vincula `auth.uid()` → `profiles.auth_user_id` → `company_id`. RLS garantiza aislamiento total entre tenants.
+
+---
+
+## 8. Deployment Plan (Cierre de Fase 4)
+
+### 🚦 Bloque 2B — Instalar el Trigger
+**Script:** `migration_phase_5_bloque2b_trigger.sql`
+
+**Verificación:**
+```sql
+SELECT trigger_name, event_manipulation, event_object_table
+FROM information_schema.triggers
+WHERE event_object_schema = 'auth' AND event_object_table = 'users';
+```
+Debe devolver una fila con `on_auth_user_created`.
+
+**Smoke Test (Prueba de Aislamiento):**
+1. Crear usuario de prueba inyectando `company_id = 1` y `role = 'agent'` en `raw_user_meta_data`.
+2. Verificar que aparezca automáticamente en `profiles` con los valores correctos.
+3. Confirmar `company_id`, `auth_user_id` y `role` exactos.
+4. Eliminar el usuario de prueba de `auth.users` y confirmar la limpieza.
+
+---
+
+### 🚦 Bloque 2A (Revisado) — Vincular admin2
+**Contexto:** El trigger no aplica retroactivamente. `admin2.dev@gmail.com` (UUID `8c4d313a-41a4-467c-996b-aca1c8fcd2a1`) no tiene perfil.
+**Acción:** INSERT manual con `ON CONFLICT (auth_user_id) DO NOTHING`.
+
+**Verificación:**
+```sql
+SELECT * FROM profiles;
+-- Debe devolver 1 fila con los datos de admin2.
+```
+
+---
+
+### 🚦 Bloque 3 — Actualizar Next.js
+**Acción:** Modificar `getUserCompanyId` y funciones derivadas para usar `.eq('auth_user_id', user.id)`.
+
+**Verificación:**
+1. Login con `admin2.dev@gmail.com` en entorno local.
+2. Navegar el CRM sin errores 500.
+3. Confirmar que los datos cargados corresponden a `company_id = 1`.
+
+---
+
+### 🚦 Bloque 4 — Eliminar el Fallback (Punto Sin Retorno)
+**Acción:**
+1. Reemplazar `get_my_company_id()` en Supabase para leer desde `profiles` via `auth.uid()`.
+2. Actualizar/reescribir políticas RLS.
+3. Eliminar toda referencia a `company_id || 1` en Next.js.
+
+**Criterio de Cierre de Fase 4 (Prueba Final):**
+1. Insertar lead desde CRM con `admin2` → debe guardarse con `company_id = 1`.
+2. Crear segundo usuario con `company_id` distinto → al loguearse NO debe ver los leads de la empresa 1.
+3. El fallback estático no existe en ningún archivo del proyecto.
+
+---
+
+## 9. Rollback Plan
+
+> [!CAUTION]
+> Ejecutar únicamente si la aplicación en producción muestra fallos críticos de autenticación. El rollback revierte la Fase 4 completa al estado inicial.
+
+**Orden de reversión (inverso al deployment):**
+
+1. **Revertir Bloque 4 (Next.js):**
+   ```bash
+   git checkout <commit-anterior>
+   # O revertir el commit específico del Bloque 4.
+   ```
+
+2. **Revertir RLS:**
+   Restaurar `get_my_company_id()` y las políticas al estado previo al Bloque 4.
+
+3. **Revertir el Trigger (Bloque 2B):**
+   ```sql
+   DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+   DROP FUNCTION IF EXISTS public.handle_new_auth_user();
+   ```
+   > Sin `CASCADE`. Si falla por dependencias, analizar y gestionar manualmente.
+
+4. El sistema vuelve al estado exacto del inicio de la Fase 4, con el fallback `company_id = 1` activo.
+
+---
+
+## 10. Qué Queda Explícitamente Fuera del Trigger
+
+Estas responsabilidades **nunca** deben incorporarse al trigger `handle_new_auth_user()`, independientemente de futuros requerimientos:
+
+- ❌ Crear o modificar registros en `companies`
+- ❌ Crear `company_settings` o configuraciones por defecto
+- ❌ Crear entradas en `company_integrations`
+- ❌ Configurar instancias de WhatsApp (YCloud) o cualquier proveedor externo
+- ❌ Inicializar bases de conocimiento de IA (Pinecone u otros)
+- ❌ Crear inventarios, pipelines, tareas o cualquier módulo de negocio
+- ❌ Enviar emails, notificaciones o webhooks externos
+- ❌ Registrar eventos en `audit_logs`
+
+Toda lógica adicional de onboarding pertenece al proceso de aprovisionamiento (n8n) invocado explícitamente por Next.js.

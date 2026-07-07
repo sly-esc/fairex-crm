@@ -1,0 +1,160 @@
+# Análisis Arquitectónico Completo — Fase 4 (auth.users → profiles)
+
+## Situación Real Confirmada
+
+| Elemento | Estado |
+|---|---|
+| `profiles` existe en public | ✅ |
+| `profiles` tiene registros | ❌ 0 filas |
+| Trigger en `auth.users` | ❌ No existe |
+| Columna `auth_user_id` en `profiles` | ✅ Bloque 1 ejecutado |
+| UUID de admin2 | ✅ `8c4d313a-41a4-467c-996b-aca1c8fcd2a1` |
+| `companies` tiene registro id=1 | ⚠️ A confirmar |
+
+---
+
+## Pregunta 1: ¿La estructura actual de profiles es suficiente?
+
+**No.** La tabla `profiles` fue renombrada desde `public.users` (una tabla de datos operacionales, no de identidad). Las migraciones anteriores solo le añadieron `company_id` y luego `auth_user_id`. No fue diseñada desde cero como tabla de identidad multiempresa.
+
+Para soportar el modelo objetivo (Business OS SaaS multiempresa), falta estructura deliberada.
+
+---
+
+## Pregunta 2: ¿Qué columnas debe tener definitivamente `profiles`?
+
+A continuación se definen las columnas **mínimas necesarias** para soportar autenticación, multitenancy, roles y extensibilidad futura. Se diferencia entre lo que ya existe y lo que se debe añadir.
+
+> [!IMPORTANT]
+> Necesitamos ejecutar la consulta:
+> `SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'profiles' ORDER BY ordinal_position;`
+> para confirmar las columnas actuales antes de generar el SQL de las que faltan.
+
+### Columnas requeridas para el modelo definitivo
+
+| Columna | Tipo | Restricción | Existe hoy | Propósito |
+|---|---|---|---|---|
+| `id` | BIGINT | PK | ✅ | Clave primaria operacional (compatible con N8N) |
+| `auth_user_id` | UUID | FK auth.users, UNIQUE | ✅ Bloque 1 | Puente con autenticación |
+| `company_id` | BIGINT | FK companies, NOT NULL | ✅ | Multitenancy |
+| `email` | TEXT | NOT NULL | ❓ | Redundancia útil — evita JOINs con auth.users |
+| `full_name` | TEXT | NULL permitido | ❓ | Nombre del usuario |
+| `role` | TEXT | NOT NULL, DEFAULT 'agent' | ❓ | Rol dentro de la empresa |
+| `is_active` | BOOLEAN | DEFAULT true | ❓ | Desactivar acceso sin eliminar datos |
+| `created_at` | TIMESTAMPTZ | DEFAULT now() | ❓ | Trazabilidad |
+| `updated_at` | TIMESTAMPTZ | DEFAULT now() | ❓ | Trazabilidad |
+
+**Roles válidos definidos:** `owner` / `admin` / `manager` / `agent`
+
+La columna `role` en `profiles` es la que permitirá en el futuro construir políticas RLS más granulares por rol (ej: un `agent` solo ve sus propios leads; un `admin` ve todos los de su empresa).
+
+---
+
+## Pregunta 3: ¿Trigger automático o INSERT explícito?
+
+### El dilema real
+
+El trigger en `auth.users` tiene una ventaja única: crea el perfil **atómicamente** con la creación del usuario. Si el INSERT en profiles falla, el usuario no se crea en auth. Esto garantiza consistencia.
+
+Sin embargo, tiene una debilidad crítica para un **B2B SaaS donde el admin controla el onboarding**:
+
+| Escenario | Trigger | INSERT explícito desde API |
+|---|---|---|
+| Usuario se crea desde Supabase Dashboard | ✅ Funciona | ❌ Olvidar el INSERT deja perfil huérfano |
+| Usuario se crea desde panel de admin FAIREX | ✅ Funciona | ✅ Funciona si el código lo llama |
+| Usuario importado por script de N8N | ✅ Funciona | ⚠️ Requiere lógica en N8N |
+| Usuario de prueba que se elimina | ⚠️ Crea perfil inútil | ✅ Control total |
+| Fallo parcial en el trigger | ❌ Rollback completo | ✅ Se puede reintentar |
+
+**Veredicto:** Para FAIREX Business OS, el trigger es la arquitectura más robusta. El caso de "usuario de prueba que crea perfil inútil" se resuelve con la cláusula de idempotencia del trigger (no crear perfil si ya existe) y borrando el usuario de auth junto con su perfil cuando sea necesario.
+
+---
+
+## Pregunta 4: Orden definitivo de implementación
+
+El orden correcto no es crear el trigger primero. Es crear los datos de referencia que el trigger necesita, luego el trigger, y finalmente el registro inicial.
+
+```
+Orden de Operaciones
+═══════════════════════════════════════════════════════════
+
+PASO 1 — Verificar/completar columnas de profiles
+        (ALTER TABLE ADD COLUMN IF NOT EXISTS para los campos faltantes)
+        ↓ idempotente ✅
+
+PASO 2 — Verificar que companies id=1 existe
+        (INSERT IF NOT EXISTS)
+        ↓ idempotente ✅
+
+PASO 3 — Instalar trigger on_auth_user_created
+        (CREATE OR REPLACE — aplica a todos los usuarios futuros)
+        ↓ idempotente ✅
+
+PASO 4 — Crear el perfil de admin2 manualmente
+        (INSERT ... ON CONFLICT DO NOTHING — el trigger no aplica a usuarios ya existentes)
+        ↓ idempotente ✅
+
+PASO 5 — Actualizar Next.js (Bloque 3)
+        (.eq('auth_user_id', user.id) en queries.ts)
+        ↓ reversible con git ✅
+
+PASO 6 — Corregir función get_my_company_id() y políticas RLS (Bloque 4)
+        ↓ reversible con DROP POLICY + CREATE POLICY ✅
+```
+
+### ¿Por qué crear el trigger ANTES del INSERT manual del admin2?
+
+Porque una vez instalado el trigger, cualquier usuario nuevo (incluyendo los clientes reales futuros) queda correctamente enlazado. El INSERT manual del paso 4 es simplemente para sincronizar al usuario que ya existía antes del trigger. Es el único registro que necesita tratamiento especial.
+
+---
+
+## Pregunta 5: ¿Todo es idempotente?
+
+Sí. Cada paso del orden propuesto tiene su mecanismo de idempotencia:
+
+| Paso | Mecanismo |
+|---|---|
+| ALTER TABLE ADD COLUMN | `IF NOT EXISTS` |
+| INSERT en companies | `IF NOT EXISTS` / `ON CONFLICT DO NOTHING` |
+| CREATE FUNCTION/TRIGGER | `CREATE OR REPLACE` |
+| INSERT del perfil de admin2 | `ON CONFLICT (auth_user_id) DO NOTHING` |
+| Cambio en Next.js | Reversible con git |
+| Políticas RLS | `DROP POLICY IF EXISTS` + `CREATE POLICY` |
+
+---
+
+## Open Questions para aprobación
+
+> [!IMPORTANT]
+> **Antes de generar cualquier SQL de modificación**, necesito que ejecutes esta única query de solo lectura:
+> ```sql
+> SELECT column_name, data_type, is_nullable, column_default
+> FROM information_schema.columns
+> WHERE table_name = 'profiles'
+> ORDER BY ordinal_position;
+> ```
+> Con el inventario real de columnas podré:
+> 1. Saber exactamente qué columnas añadir y cuáles ya existen.
+> 2. Generar el SQL de ALTER TABLE sin riesgo de duplicar columnas.
+> 3. Ajustar el trigger para leer/escribir solo las columnas que realmente existan.
+
+> [!IMPORTANT]
+> **¿Existe ya el registro `companies.id = 1` en producción?**
+> El trigger y el INSERT del perfil requieren que la FK de `company_id` apunte a una empresa válida. Si la empresa no existe, el INSERT fallará.
+> Query de verificación:
+> ```sql
+> SELECT id, name FROM companies WHERE id = 1;
+> ```
+
+---
+
+## Resumen Ejecutivo
+
+| Decisión | Aprobada |
+|---|---|
+| `profiles` se enriquece con columnas de identidad | ⏳ Pendiente verificar columnas actuales |
+| Se instala trigger antes del INSERT manual | ✅ |
+| Trigger tiene responsabilidad única (solo crea perfil) | ✅ |
+| Todo el proceso es idempotente | ✅ |
+| El fallback company_id=1 se elimina en el Bloque 4, no antes | ✅ |
+| N8N y Vercel no requieren cambios en ningún paso | ✅ |

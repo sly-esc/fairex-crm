@@ -1,0 +1,165 @@
+# Análisis Técnico: Smoke Test del Trigger sin `SUPABASE_SERVICE_ROLE_KEY`
+
+## Respuesta Corta
+
+**Sí, el Smoke Test puede validarse completamente sin introducir la `SUPABASE_SERVICE_ROLE_KEY` en el proyecto.** No existe ninguna razón técnica que obligue a usar `auth.admin.createUser()` para verificar que el trigger funciona.
+
+---
+
+## ¿Por qué? — Mecánica exacta del trigger
+
+El trigger [handle_new_auth_user](file:///c:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/supabase/migrations/migration_phase_5_bloque2b_trigger.sql#L22-L66) se dispara con:
+
+```sql
+AFTER INSERT ON auth.users
+```
+
+Esto significa que se activa ante **cualquier inserción** en `auth.users`, sin importar **quién o qué** la provocó. El trigger no distingue entre:
+
+| Método de creación | ¿Dispara el trigger? |
+|---|---|
+| `auth.admin.createUser()` (Service Role SDK) | ✅ Sí |
+| `auth.signUp()` (Client SDK / Anon Key) | ✅ Sí |
+| `INSERT INTO auth.users` desde SQL Editor | ✅ Sí |
+| Crear usuario desde el **Dashboard de Supabase** (UI) | ✅ Sí |
+
+Todos estos métodos insertan una fila en `auth.users`, y el trigger `AFTER INSERT` se ejecuta de forma idéntica en cada caso.
+
+> [!IMPORTANT]
+> `auth.admin.createUser()` NO es la única vía para insertar en `auth.users`. Es simplemente una conveniencia del SDK Admin que bypasa la confirmación de email. Pero el trigger PostgreSQL opera a nivel de base de datos, por debajo de cualquier SDK.
+
+---
+
+## Tres alternativas manuales para el Smoke Test
+
+### Opción A: SQL Editor de Supabase (Recomendada) ⭐
+
+Ejecutar directamente en el **SQL Editor del Dashboard de Supabase** (donde ya ejecutas tus migraciones):
+
+```sql
+-- 1. Verificar que existe la compañía de prueba
+SELECT id, name FROM companies WHERE id = 1;
+
+-- 2. Crear un usuario de prueba directamente en auth.users
+--    (esto dispara el trigger automáticamente)
+INSERT INTO auth.users (
+  id,
+  instance_id,
+  email,
+  encrypted_password,
+  email_confirmed_at,
+  raw_user_meta_data,
+  role,
+  aud,
+  created_at,
+  updated_at
+)
+VALUES (
+  gen_random_uuid(),
+  '00000000-0000-0000-0000-000000000000',
+  'smoke-test@fairex.test',
+  crypt('SmokeTest2026!', gen_salt('bf')),
+  now(),
+  '{"company_id": 1, "role": "agent"}'::jsonb,
+  'authenticated',
+  'authenticated',
+  now(),
+  now()
+);
+
+-- 3. Verificar que el trigger creó el perfil automáticamente
+SELECT * FROM profiles WHERE auth_user_id IS NOT NULL ORDER BY id DESC LIMIT 5;
+
+-- 4. Limpieza inmediata del usuario de prueba
+DELETE FROM profiles WHERE auth_user_id = (
+  SELECT id FROM auth.users WHERE email = 'smoke-test@fairex.test'
+);
+DELETE FROM auth.users WHERE email = 'smoke-test@fairex.test';
+```
+
+> [!TIP]
+> **¿Por qué es la mejor opción?** El SQL Editor del Dashboard ya opera con privilegios de `postgres` (superuser). No necesitas ninguna llave adicional en tu código. Es exactamente el mismo entorno donde ejecutas migraciones.
+
+### Opción B: Dashboard UI de Supabase (Authentication → Users)
+
+1. Ir a **Authentication → Users** en el Dashboard de Supabase
+2. Hacer clic en **"Add User"** → **"Create New User"**
+3. Rellenar email y contraseña
+4. **Limitación**: El Dashboard UI de Supabase **no permite inyectar `raw_user_meta_data`** al crear el usuario, así que el trigger fallará con:
+
+```
+FAIREX ERROR: company_id es obligatorio en raw_user_meta_data para crear un usuario.
+```
+
+Esto **sigue siendo una validación útil** — confirma que las validaciones del trigger funcionan. Pero no prueba el *happy path* completo.
+
+> [!WARNING]
+> Esta opción solo valida que el trigger **se ejecuta y rechaza datos inválidos**. No valida la creación exitosa del perfil.
+
+### Opción C: `supabase.auth.signUp()` desde un script temporal local
+
+Crear un script temporal Node.js que use solo la `ANON_KEY` (que ya tienes en el proyecto):
+
+```js
+// smoke-test-trigger.mjs (ejecutar localmente, luego borrar)
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY  // ← Solo anon key
+)
+
+const { data, error } = await supabase.auth.signUp({
+  email: 'smoke-test@fairex.test',
+  password: 'SmokeTest2026!',
+  options: {
+    data: { company_id: 1, role: 'agent' }  // ← Esto se inyecta en raw_user_meta_data
+  }
+})
+
+console.log('Resultado:', data, error)
+// Limpiar desde SQL Editor después
+```
+
+> [!NOTE]
+> **Diferencia clave**: `signUp()` respeta la configuración de confirmación de email del proyecto. Si tienes email confirmation habilitado, el usuario se creará pero su `email_confirmed_at` será NULL. Aun así, **el trigger se dispara igualmente** porque el `INSERT` en `auth.users` ya ocurrió.
+
+---
+
+## ¿Cuándo SÍ necesitarías la `SUPABASE_SERVICE_ROLE_KEY`?
+
+La `service_role_key` será necesaria cuando construyas:
+
+| Caso de uso real | ¿Por qué necesita service_role? |
+|---|---|
+| **API de onboarding automatizado** | Para crear usuarios sin confirmación de email (`auth.admin.createUser`) desde un backend |
+| **Panel admin multi-tenant** | Para listar/gestionar usuarios de todas las empresas (bypasa RLS) |
+| **Webhooks o Edge Functions** | Para operaciones administrativas server-to-server |
+| **Scripts de migración de usuarios existentes** | Para bulk-insert en auth.users con metadata específica |
+
+Ninguno de estos casos existe en la FASE 5 actual. La incorporación prematura de esta credencial violaría el principio de menor privilegio sin beneficio funcional.
+
+---
+
+## Recomendación Final
+
+```mermaid
+graph TD
+    A["FASE 5 Actual:<br/>Smoke Test del Trigger"] --> B{"¿Requiere<br/>service_role_key?"}
+    B -->|NO| C["Opción A: SQL Editor<br/>(privilegios postgres nativos)"]
+    B -->|NO| D["Opción C: signUp con anon_key<br/>(script temporal)"]
+    
+    E["FASE 7+:<br/>Onboarding Automatizado"] --> F{"¿Requiere<br/>service_role_key?"}
+    F -->|SÍ| G["Incorporar service_role_key<br/>en variables de entorno del servidor"]
+    
+    style A fill:#1a1a2e,stroke:#6366f1,color:#fff
+    style C fill:#064e3b,stroke:#10b981,color:#fff
+    style D fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    style E fill:#1a1a2e,stroke:#6366f1,color:#fff
+    style G fill:#7f1d1d,stroke:#ef4444,color:#fff
+```
+
+> [!IMPORTANT]
+> **Recomiendo la Opción A (SQL Editor)** para el Smoke Test. Es la más directa, no introduce ninguna dependencia nueva en el proyecto, opera en el mismo entorno que ya usas para migraciones, y permite verificar tanto el happy path como los caminos de error del trigger con control total.
+
+Tu instinto de mantener el menor privilegio es correcto. La `SUPABASE_SERVICE_ROLE_KEY` debe incorporarse **cuando haya código en producción que la consuma**, no antes.

@@ -21,17 +21,28 @@ function normalizeStage(raw: string): string {
  */
 async function getUserCompanyId(supabase: any) {
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return 1 // Fallback para desarrollo o sesiones muertas
+  if (!user) {
+    console.log('[BLOQUE3_DIAG] ❌ Sin sesión activa — usando fallback company_id=1')
+    return 1 // Fallback para desarrollo o sesiones muertas
+  }
+
+  console.log('[BLOQUE3_DIAG] 🔍 Buscando perfil para auth_user_id:', user.id, '| email:', user.email)
 
   const { data, error } = await supabase
     .from('profiles')
     .select('company_id')
-    .eq('id', user.id)
+    .eq('auth_user_id', user.id)
     .single()
 
-  if (error || !data) return 1 // Fallback si no existe perfil aún
-  
-  return data.company_id || 1
+  if (error || !data) {
+    console.log('[BLOQUE3_DIAG] ❌ Perfil no encontrado — usando fallback company_id=1 | error:', error?.message)
+    return 1 // Fallback si no existe perfil aún
+  }
+
+  const resolvedId = data.company_id || 1
+  const source = data.company_id ? '✅ BASE DE DATOS (profiles.auth_user_id)' : '⚠️ Fallback (company_id null en perfil)'
+  console.log(`[BLOQUE3_DIAG] ${source} → company_id resuelto: ${resolvedId}`)
+  return resolvedId
 }
 
 // --- Server Actions ---

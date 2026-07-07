@@ -1,0 +1,44 @@
+# FASE 5: Despliegue a Producción y Configuración de Dominio
+
+El objetivo de esta fase es llevar el sistema estable de FAIREX CRM a producción. Utilizaremos Vercel para el alojamiento web y configuraremos el dominio personalizado gestionado en Hostinger, garantizando seguridad HTTPS y preparándonos para la demo comercial.
+
+> [!IMPORTANT]
+> **Congelación Confirmada:** La FASE 4 (RLS) y todas las modificaciones de base de datos quedan estrictamente pausadas. Todos los archivos de documentación y scripts SQL de Fases 3 y 4 han sido congelados. No se generará más SQL ni se realizarán cambios de esquema.
+
+## Open Questions
+
+Para avanzar con el despliegue en Vercel de manera fluida, por favor aclárame los siguientes puntos:
+
+1. **Control de Versiones:** ¿El código fuente ya se encuentra subido a un repositorio remoto (como GitHub, GitLab o Bitbucket)? Vercel requiere conectarse a un repositorio para habilitar el despliegue automático.
+2. **Cuenta de Vercel:** ¿Ya tienes una cuenta activa en Vercel y estás listo para crear el nuevo proyecto?
+3. **Acceso a Hostinger:** ¿Tienes acceso al panel de control de Hostinger para poder modificar los registros DNS cuando Vercel nos lo solicite?
+
+## Proposed Changes
+
+La FASE 5 no implica modificar el código fuente actual, sino orquestar la infraestructura. Los pasos que seguiremos son:
+
+### 1. Conexión con Vercel
+- Vincularemos tu repositorio al proyecto de Vercel.
+- Vercel detectará automáticamente la configuración de Next.js.
+
+### 2. Variables de Entorno
+- Deberás copiar el contenido de tu `.env.local` e introducirlo en la configuración de *Environment Variables* de Vercel. Esto asegurará que el frontend en producción se conecte a tu instancia de Supabase de manera correcta.
+- Las variables esenciales incluyen `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+
+### 3. Configuración de DNS y HTTPS
+- En el dashboard de Vercel, agregaremos tu dominio personalizado.
+- Vercel proporcionará los valores para configurar los DNS (generalmente un registro `A` apuntando a `76.76.21.21` y un registro `CNAME`).
+- Te guiaré paso a paso sobre cómo ingresar esos registros en el panel de Hostinger.
+- Una vez que la propagación DNS finalice, Vercel generará e instalará automáticamente el certificado SSL (HTTPS).
+
+### 4. Pruebas de Validación
+- Despliegue inicial (First Deploy).
+- Pruebas desde la computadora de escritorio.
+- Pruebas desde un dispositivo móvil para asegurar que la interfaz responsive funcione perfectamente para la demo.
+
+## Verification Plan
+
+### Manual Verification
+- Acceder al dominio personalizado utilizando `https://`.
+- Iniciar sesión en el CRM y verificar que los datos históricos (Leads, Conversaciones) se cargan correctamente desde Supabase.
+- Interactuar con la plataforma tanto en Desktop como en Mobile para validar la experiencia de usuario de cara a la demostración comercial.

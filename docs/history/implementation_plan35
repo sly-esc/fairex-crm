@@ -1,0 +1,54 @@
+# Diseño Arquitectónico: Vínculo entre auth.users y profiles
+
+El objetivo principal es resolver la desconexión actual entre la autenticación (`auth.users.id` que es UUID) y el perfil de usuario (`profiles.id` que es BIGINT) para permitir que el CRM y las políticas RLS obtengan el `company_id` real en lugar del fallback estático.
+
+## Alternativas Arquitectónicas
+
+A continuación se analizan las alternativas para lograr esta asociación, priorizando la estabilidad de producción.
+
+### Opción 1: Agregar columna `auth_user_id` (UUID) en la tabla `profiles` (Recomendada)
+Esta opción mantiene el `id` actual de `profiles` como `BIGINT` intacto, pero le añade una nueva columna dedicada para enlazarse con Supabase Auth.
+
+- **Riesgo:** Muy Bajo. Es una operación no destructiva.
+- **Compatibilidad con Producción:** Total. Las tablas y vistas existentes que dependen de `profiles.id` (como relaciones foráneas) no se rompen porque el Primary Key sigue siendo `BIGINT`.
+- **Compatibilidad con N8N:** Total. N8N puede seguir operando usando el `company_id` y los IDs numéricos de `profiles` sin enterarse de la autenticación subyacente.
+- **Compatibilidad con RLS:** Alta. Las políticas RLS y la función `get_my_company_id()` se actualizan para buscar por `auth_user_id = auth.uid()` de forma directa y eficiente.
+- **Complejidad de Migración:** Baja. Consiste en un `ALTER TABLE ADD COLUMN` y un proceso (backfill) para emparejar los usuarios existentes.
+- **Impacto sobre el Código actual:** Mínimo. En Next.js solo cambiamos `.eq('id', user.id)` por `.eq('auth_user_id', user.id)`.
+- **Escalabilidad:** Muy buena. Relación 1:1 estándar y clara.
+
+### Opción 2: Crear tabla intermedia (ej. `user_accounts` o `company_members`)
+Se crea una tabla puente que mapea `auth.users.id` (UUID) hacia `profiles.id` (BIGINT) y `company_id`.
+
+- **Riesgo:** Bajo.
+- **Compatibilidad con Producción:** Alta.
+- **Compatibilidad con N8N:** Total.
+- **Compatibilidad con RLS:** Media. Requeriría hacer un `JOIN` adicional dentro de las políticas de seguridad (RLS) para resolver a qué compañía pertenece el usuario, lo que añade una penalización de rendimiento en cada consulta a la base de datos.
+- **Complejidad de Migración:** Media. Requiere crear la tabla, gestionar triggers en `auth.users` e insertar registros históricos.
+- **Impacto sobre el Código actual:** Medio. Next.js tendría que consultar la tabla puente en lugar de `profiles`.
+- **Escalabilidad:** Excelente si a futuro un mismo usuario (email) necesita pertenecer a múltiples compañías (multi-tenancy avanzado). Si el modelo actual es 1 usuario = 1 compañía, es sobreingeniería innecesaria.
+
+### Opción 3: Migrar completamente `profiles.id` a UUID
+Refactorizar por completo la tabla `profiles` para que su `id` sea el mismo UUID que `auth.users`.
+
+- **Riesgo:** Extremo.
+- **Compatibilidad con Producción:** Nula durante la migración. Rompe retrocompatibilidad temporalmente.
+- **Compatibilidad con N8N:** Baja a corto plazo, requeriría auditar y ajustar todos los flujos de N8N que esperan que un ID de usuario/agente sea numérico.
+- **Compatibilidad con RLS:** Excelente. Es el estándar por defecto de Supabase.
+- **Complejidad de Migración:** Altísima. Requiere eliminar temporalmente todas las Foreign Keys que apuntan a `profiles.id` en otras tablas (leads, chats, etc.), cambiar el tipo de dato, migrar la data y recrear los constraints.
+- **Impacto sobre el Código actual:** Alto. Cualquier componente de UI o API que maneje IDs de perfil como números se romperá.
+- **Escalabilidad:** Alta, pero el costo y riesgo técnico para llegar ahí es prohibitivo para un sistema en producción vivo.
+
+---
+
+> [!IMPORTANT]
+> ## Veredicto y Recomendación del Arquitecto
+> **Recomiendo categóricamente la Opción 1: Agregar el campo `auth_user_id` a la tabla `profiles`.**
+> 
+> **¿Por qué?**
+> 1. **Cero riesgo de romper Producción/N8N:** Al no alterar el Primary Key (BIGINT), no alteramos ninguna relación existente ni el comportamiento de N8N.
+> 2. **Rendimiento RLS:** Permite que las políticas sigan funcionando con un solo `SELECT` directo a la tabla `profiles`.
+> 3. **Implementación limpia:** Podemos desplegarlo gradualmente en un solo bloque, garantizando que el sistema jamás caiga mientras hacemos la transición.
+
+## User Review Required
+Por favor, confirma si apruebas la **Opción 1** como arquitectura definitiva. Una vez que me des luz verde, generaremos el Bloque 1 aplicando este cambio de manera incremental y validada, como solicitaste.

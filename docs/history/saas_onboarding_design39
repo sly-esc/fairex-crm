@@ -1,0 +1,64 @@
+# Arquitectura de Onboarding: FAIREX Business OS
+
+Este documento define el ciclo de vida completo de un cliente en el ecosistema SaaS de FAIREX. Establece las responsabilidades exactas de cada componente (Next.js, Supabase, n8n) para garantizar que el modelo multiempresa escale sin deuda técnica y mantenga la separación de responsabilidades.
+
+---
+
+## 1. Responsabilidades por Capa (Separation of Concerns)
+
+Para que el Business OS sea escalable, cada tecnología tiene un rol exclusivo en el onboarding:
+
+| Componente | Rol en el Onboarding |
+|---|---|
+| **Next.js (API Routes / Server Actions)** | **Orquestador Central**. Es el único que tiene credenciales de Supabase Admin. Su responsabilidad es validar la solicitud comercial y disparar la creación de la empresa y del usuario en Supabase. |
+| **Supabase (Base de datos & Auth)** | **Motor de Identidad y Seguridad**. Su única responsabilidad es mantener la consistencia de los datos (mediante FKs y el trigger de `profiles`) y proteger el acceso (RLS). **No** orquesta servicios externos. |
+| **n8n (Workflows)** | **Motor de Aprovisionamiento y Automatización**. Escucha eventos de base de datos (o webhooks de Next.js) para inicializar recursos asíncronos y pesados: crear la instancia de WhatsApp en YCloud, aprovisionar la IA (Pinecone/OpenAI) e inicializar bases de datos de inventario. |
+
+---
+
+## 2. Flujo Completo de Onboarding (Estado Final Objetivo)
+
+El proceso desde que un cliente paga o firma hasta que usa el sistema se divide en 4 fases cronológicas.
+
+### Fase 1: Creación del Inquilino (Tenant)
+**Actor:** Next.js (Admin API)
+1. Un endpoint de Next.js recibe la solicitud (ej. `/api/admin/onboard-tenant`).
+2. Inserta el registro inicial en la tabla `companies` (ej. `nombre`, `plan`).
+3. Recupera el `company_id` (ej. `BIGINT 5`) recién generado.
+4. *Punto de extensibilidad:* Supabase puede tener un trigger simple en `companies` para crear automáticamente una fila vacía en `company_settings` (configuraciones por defecto).
+
+### Fase 2: Creación de la Identidad
+**Actor:** Next.js (Admin API) → Supabase Auth → Trigger
+1. El mismo endpoint de Next.js llama a `supabase.auth.admin.createUser()`.
+2. **El Contrato:** En esta llamada, Next.js inyecta `raw_user_meta_data: { company_id: 5, role: 'owner' }`.
+3. **El Trigger:** Supabase inserta al usuario en `auth.users`, lo que dispara nuestro `handle_new_auth_user()`.
+4. El trigger valida el `company_id` y crea atómicamente la fila en `profiles`.
+5. El cliente recibe el email mágico o la contraseña temporal para ingresar.
+
+### Fase 3: Aprovisionamiento de Módulos (Asíncrono)
+**Actor:** n8n
+1. Al crearse la fila en `companies`, n8n detecta el evento (vía Webhook disparado por Next.js o mediante Supabase Realtime).
+2. **WhatsApp (YCloud):** n8n ejecuta el workflow para solicitar un número nuevo, configurar el webhook de YCloud y enlazarlo al `company_id 5`.
+3. **Inteligencia Artificial:** n8n crea un namespace separado en Pinecone (vector DB) etiquetado con `tenant_id: 5` para el RAG de esa empresa.
+4. **Inventario:** n8n inicializa el árbol de categorías o etiquetas por defecto en las tablas de inventario de esa empresa.
+5. Todo este proceso actualiza la tabla `company_settings` (ej. `whatsapp_status = 'active'`, `ai_initialized = true`).
+
+### Fase 4: Inicio de Sesión y RLS
+**Actor:** El Cliente + Supabase
+1. El cliente inicia sesión.
+2. Next.js recibe el JWT (que internamente está vinculado al `auth.uid()`).
+3. El motor RLS lee la política `USING (auth_user_id = auth.uid())`, deduce que pertenece al `company_id 5` y le muestra **únicamente** los leads, conversaciones e inventario de su empresa.
+
+---
+
+## 3. Estado Transicional (Fase Actual)
+
+Mientras construimos la UI y los endpoints de Next.js para automatizar la Fase 1 y 2, operaremos en un modelo de **Onboarding Asistido (Manual pero Determinado)**.
+
+### Lo que haremos temporalmente (Nosotros como Admins):
+1. Insertaremos manualmente la empresa en `companies` vía SQL Editor para obtener el `company_id`.
+2. Ejecutaremos un script local (Node.js o n8n) que llame a la API de Supabase Admin `createUser`, inyectando el `company_id` y `role` en la metadata.
+3. El **Trigger que instalaremos hoy** actuará automáticamente, creando el perfil sin importar si la llamada vino de Next.js o de nuestro script.
+
+### Por qué esta arquitectura es robusta:
+El día que lancemos el flujo 100% automático (Self-Service o Panel Admin), **la base de datos y el trigger no cambiarán absolutamente en nada**. Lo único que cambiará es quién presiona el botón para ejecutar el código de Next.js. El contrato de la metadata garantiza que el diseño actual es definitivo.

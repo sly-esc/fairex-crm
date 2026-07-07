@@ -1,0 +1,102 @@
+# Descubrimiento de Esquema Real — FASE 4
+
+Excelente hallazgo. Esta es exactamente la clase de discrepancia que queríamos evitar. Si `profiles.id` es `BIGINT` y `auth.users.id` es `UUID`, significa que la migración fase 4 que intenta hacer `SELECT company_id FROM profiles WHERE id = auth.uid()` fallaría con un error de "type mismatch" (UUID vs BIGINT).
+
+Por favor, ejecuta estas consultas de inspección estructural en tu editor SQL de Supabase para tener el mapa exacto.
+
+---
+
+### 1. Descubrir todas las columnas de `profiles`
+Esta consulta nos mostrará qué columnas existen realmente en `profiles` y sus tipos. Seguramente hay una columna como `user_id`, `auth_id` o `uuid` que es la verdadera conexión con Supabase Auth.
+
+```sql
+SELECT 
+    column_name, 
+    data_type, 
+    character_maximum_length
+FROM 
+    information_schema.columns
+WHERE 
+    table_schema = 'public' 
+    AND table_name = 'profiles'
+ORDER BY 
+    ordinal_position;
+```
+
+---
+
+### 2. Descubrir todas las columnas de `companies`
+Para confirmar si realmente todo en `companies` está basado en `BIGINT`.
+
+```sql
+SELECT 
+    column_name, 
+    data_type, 
+    character_maximum_length
+FROM 
+    information_schema.columns
+WHERE 
+    table_schema = 'public' 
+    AND table_name = 'companies'
+ORDER BY 
+    ordinal_position;
+```
+
+---
+
+### 3. Descubrir Relaciones y Foreign Keys (Profiles, Companies, Auth)
+Esta consulta mapea todas las llaves foráneas que involucran a tus tablas principales, incluyendo cómo se enlazan con el esquema `auth` de Supabase.
+
+```sql
+SELECT
+    tc.table_schema,
+    tc.table_name,
+    kcu.column_name,
+    ccu.table_schema AS foreign_schema,
+    ccu.table_name AS foreign_table_name,
+    ccu.column_name AS foreign_column_name
+FROM 
+    information_schema.table_constraints AS tc 
+JOIN information_schema.key_column_usage AS kcu
+    ON tc.constraint_name = kcu.constraint_name
+    AND tc.table_schema = kcu.table_schema
+JOIN information_schema.constraint_column_usage AS ccu
+    ON ccu.constraint_name = tc.constraint_name
+    AND ccu.table_schema = tc.table_schema
+WHERE 
+    tc.constraint_type = 'FOREIGN KEY'
+    AND (
+        (tc.table_schema = 'public' AND tc.table_name IN ('companies', 'profiles'))
+        OR 
+        (ccu.table_schema = 'public' AND ccu.table_name IN ('companies', 'profiles'))
+        OR 
+        (ccu.table_schema = 'auth' AND ccu.table_name = 'users')
+    )
+ORDER BY 
+    tc.table_name, kcu.column_name;
+```
+
+---
+
+### 4. Consulta de Usuarios Huérfanos (Versión Adaptativa)
+
+Dado que no sabemos aún cómo se llama la columna que une `auth.users` con `profiles`, por favor **reemplaza `<COLUMNA_UUID>`** en esta consulta con el nombre de la columna UUID que descubras en el Paso 1 (por ejemplo `auth_id`, `user_id`, etc.).
+
+```sql
+SELECT 
+    au.id AS auth_user_id,
+    au.email,
+    au.created_at,
+    p.id AS profile_bigint_id
+FROM 
+    auth.users au
+LEFT JOIN 
+    public.profiles p ON au.id = p.<COLUMNA_UUID>
+WHERE 
+    p.id IS NULL;
+```
+
+---
+
+**Siguientes pasos:**
+Pégame aquí los resultados de las consultas 1, 2 y 3. Con eso, haré el diagnóstico definitivo de la discrepancia de tipos y generaré el reporte de inconsistencias y la solución segura para el Bloque 1.
