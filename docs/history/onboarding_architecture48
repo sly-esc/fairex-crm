@@ -1,0 +1,129 @@
+# Arquitectura del Ecosistema SaaS — Onboarding y Omnicanalidad
+**FAIREX AI Business OS** · Diseño Definitivo  
+Fecha: 2026-07-12 | Estado: **Propuesta Arquitectónica**
+
+---
+
+> [!IMPORTANT]
+> **Objetivo de Negocio:** Aprovisionar un cliente nuevo desde que se cierra la venta hasta que el BOT de IA responde en **menos de 15 minutos**, sin tocar código, sin duplicar workflows de n8n y de forma 100% autogestionable o asistida por un operador de FAIREX.
+
+---
+
+## 1. El Modelo de Onboarding: Secuencia de Creación
+
+Para lograr un onboarding instantáneo y escalable, el proceso de aprovisionamiento se divide en la **Creación del Tenant (Empresa)** y la **Activación de Servicios**.
+
+### 1.1 Secuencia Exacta de Creación de Registros
+
+Todo el proceso es orquestado por un **único Server Action** en Next.js (`provisionTenant`), ejecutado por el SuperAdmin de FAIREX (o por el cliente en un flujo self-serve futuro), corriendo dentro de una transacción o flujo secuencial manejado:
+
+1. **`companies` (Creación del Tenant)**
+   - Se crea la empresa y se obtiene el `company_id`.
+2. **`company_settings` (Configuración Core)**
+   - Se insertan los valores por defecto (ej. Prompt de IA base, etapas del pipeline, branding).
+3. **`company_modules` (Feature Flags del SaaS)**
+   - Se insertan los módulos habilitados según el plan contratado (`crm`, `pipeline`, `ai_scoring`, etc.) con `is_active = true`.
+4. **`company_integrations` (Preparación de Canales)**
+   - Se insertan los registros para las integraciones contratadas (ej. `whatsapp`, `rack`) en estado `pending_auth` o `disconnected`.
+5. **`auth.users` (Creación del Owner)**
+   - Se crea el usuario en Supabase Auth mediante `supabase.auth.admin.createUser()`.
+   - **Crucial:** Se inyecta `raw_user_meta_data = { "company_id": "<uuid>", "role": "owner" }`.
+6. **`profiles` (Disparo Automático del Trigger)**
+   - El trigger `handle_new_auth_user` (ya existente) lee la metadata e inserta automáticamente en `profiles`.
+7. **`company_members` (Formalización del Equipo)**
+   - Next.js inserta el registro final vinculando la empresa y el usuario con su rol para el control de acceso de la aplicación.
+
+### 1.2 Datos Capturados durante el Onboarding
+
+| Campo | Tipo | Naturaleza | Propósito |
+|-------|------|------------|-----------|
+| **Nombre de Empresa** | Texto | 🔴 Obligatorio | Identidad del tenant |
+| **Plan Contratado** | Select | 🔴 Obligatorio | Define qué `company_modules` se activan |
+| **Email del Owner** | Email | 🔴 Obligatorio | Acceso al sistema |
+| **Contraseña / Magic Link** | Auth | 🔴 Obligatorio | Seguridad inicial |
+| **Industria / Nicho** | Select | 🟡 Opcional | Pre-configura el Prompt de IA en `company_settings` |
+| **Logo / Branding** | Media | 🟡 Opcional | Personalización del Dashboard |
+| **Horario de Atención** | JSON | 🟡 Opcional | Para que el BOT sepa cuándo derivar a humano |
+
+---
+
+## 2. Omnicanalidad y Escalabilidad en n8n
+
+El mayor riesgo de escalabilidad es tener "un workflow de n8n por cliente" o "un workflow por canal". Para incorporar clientes en < 15 min, **n8n debe ser multi-tenant y agnóstico al canal**.
+
+### 2.1 Estandarización de Canales Futuros (Facebook, IG, TikTok)
+
+Para que conectar un nuevo canal sea trivial (plug-and-play), la arquitectura requiere que la complejidad de las APIs de Meta/TikTok recaiga en Next.js (BFF), no en el workflow principal del BOT.
+
+**Arquitectura "Standard Message Event":**
+1. FAIREX mantiene **una sola Meta App** centralizada.
+2. El cliente hace "Login with Facebook" en el Dashboard de FAIREX.
+3. Next.js guarda el Token OAuth encriptado en `company_integrations.credentials`.
+4. Cuando un lead escribe por Instagram, Meta envía el Webhook a **Next.js**.
+5. Next.js recibe el Webhook, identifica el `company_id` (a través del ID de la página de FB/IG), estandariza el mensaje y **lo encola a n8n**.
+
+**Payload unificado hacia n8n:**
+```json
+{
+  "company_id": "uuid-del-tenant",
+  "channel_type": "instagram", // whatsapp, messenger, tiktok
+  "external_lead_id": "ig-123456789",
+  "message_text": "Hola, ¿precio?",
+  "attachments": []
+}
+```
+
+**Resultado:** El workflow de n8n **nunca cambia**. Recibe este JSON estandarizado, hace query a `lead_memory` usando el `company_id` y `external_lead_id`, y procesa la IA. La respuesta la emite vía un nodo API hacia Next.js, quien se encarga de entregar el mensaje a la API de Instagram o WhatsApp según el canal.
+
+### 2.2 Desacoplamiento de Inventario (Rack)
+
+Como se estableció en el plan anterior, **n8n es ciego a Rack**.
+
+1. Rack envía webhooks a Next.js (`/api/integrations/rack/sync`).
+2. Next.js actualiza la tabla `products` en Supabase.
+3. Durante el análisis del mensaje (en n8n), el agente de IA consulta la tabla `products` en Supabase filtrando por `company_id`.
+4. El BOT responde al cliente basado exclusivamente en los datos de Supabase. 
+
+Si mañana FAIREX se integra con Shopify o un ERP distinto, el BOT no sufre ninguna modificación, ya que Next.js se encarga de normalizar los datos de Shopify hacia la misma tabla `products`.
+
+---
+
+## 3. Tablas Adicionales y su Justificación
+
+Basado en el análisis de 360 grados, estas son las tablas de soporte que **realmente aportan valor** al ecosistema sin generar over-engineering:
+
+### 3.1 `company_settings` (Ya existe en la migración 0001, pero debe expandirse)
+**Aporta valor:** 🔴 CRÍTICO. 
+**Justificación:** Es el "cerebro" estático de la empresa. Aquí vive la directriz de la IA (`ai_config` con el system prompt adaptado al negocio, tono, restricciones) y la estructura del embudo (`pipeline_stages`). Evita tener que hardcodear el prompt en n8n para cada cliente, permitiendo un único workflow de n8n que lee este prompt dinámicamente según el `company_id`.
+
+### 3.2 ¿Una tabla `channels` separada?
+**Aporta valor:** ❌ BAJO (Redundante).
+**Justificación:** No es necesaria una tabla específica de `channels`. Los canales (WhatsApp, FB, IG) se modelan perfectamente como filas dentro de `company_integrations`. La configuración de la línea telefónica o la página de Facebook se almacena en `company_integrations.config`.
+
+### 3.3 ¿Una tabla `prompts` versionada?
+**Aporta valor:** ❌ BAJO (Para la etapa actual).
+**Justificación:** Versionar prompts añade complejidad de UX y de base de datos. Para el 95% de las PyMEs, un único campo `system_prompt` en `company_settings.ai_config` es suficiente. La optimización y versionado de prompts es una característica de Fase 4 (Enterprise).
+
+### 3.4 `company_modules` y `company_integrations` (Propuestas en el plan anterior)
+**Aporta valor:** 🔴 CRÍTICO.
+**Justificación:** Son el mecanismo que permite encender/apagar partes del software (feature flags) y gestionar la facturación/acceso sin desplegar código distinto por cliente. 
+
+---
+
+## 4. El "Momento Ajá" (Flujo en < 15 min)
+
+1. El equipo de Ventas cierra un cliente.
+2. Ventas entra al panel Admin de FAIREX y llena 4 campos: Nombre, Email, Plan, Industria. Clic en "Crear Tenant".
+3. El cliente recibe un correo, establece su contraseña y entra a FAIREX.
+4. El dashboard lo guía a "Conectar WhatsApp" (Escanea código QR embebido mediante un proveedor de API como Baileys/WAPIs o la API Cloud oficial).
+5. Se insertan las credenciales en `company_integrations`.
+6. **El sistema está vivo.** Un lead escribe al WhatsApp del cliente, el mensaje fluye a Next.js, de ahí a n8n, el BOT lee el prompt en `company_settings` y responde. 
+7. Tiempo total: 10 minutos.
+
+---
+
+## Conclusión Arquitectónica
+
+La clave para no tocar código ni workflows en cada onboarding es la **Abstracción del Tenant**. n8n debe operar como una "caja negra de procesamiento multi-tenant" que recibe entradas estandarizadas y devuelve salidas estandarizadas. Next.js (Supabase) asume el rol del router omnicanal y traductor de integraciones (Rack, Meta, Shopify).
+
+¿Estás de acuerdo con este diseño del ecosistema? Si lo apruebas, estamos listos para generar el código SQL del Bloque 0 (Fundación + Deudas Técnicas).

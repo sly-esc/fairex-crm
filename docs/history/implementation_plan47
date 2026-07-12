@@ -1,0 +1,483 @@
+# Arquitectura Refinada — Módulo Inventario Rack
+**FAIREX AI Business OS** · Plan técnico v2  
+Fecha: 2026-07-12 | Estado: **Aprobado para implementación**
+
+---
+
+> [!IMPORTANT]
+> **Principio rector de este documento:** Supabase es la única fuente de verdad del sistema. Rack es una integración externa que **escribe hacia Supabase**, no al revés. El BOT (n8n) nunca consulta Rack directamente — solo lee de Supabase. Evolución incremental: cada fase debe ser funcional y vendible por sí sola.
+
+---
+
+## 0. Deudas técnicas a resolver ANTES de cualquier migración de inventario
+
+Estas deudas son independientes del módulo inventario pero bloquean su funcionamiento correcto. Deben ir en la siguiente migración sin importar el tema.
+
+| # | Deuda | Impacto | Prioridad |
+|---|-------|---------|:---------:|
+| DT-1 | `company_members` tiene RLS ON pero sin policies → tabla bloqueada | Inventario no puede leer roles | 🔴 Crítico |
+| DT-2 | `tasks`, `notifications`, `company_settings` sin policies RLS | Módulos del dashboard inoperables | 🔴 Crítico |
+| DT-3 | Ambigüedad `user_profiles` vs `profiles` — código usa `profiles`, migración creó `user_profiles` | Inconsistencia que se agravará | 🟠 Alto |
+| DT-4 | Tipo `company_id`: UUID en tablas nuevas vs BIGINT en trigger y función RLS | FK rompe si no se unifica | 🔴 Crítico |
+
+> [!CAUTION]
+> El bloque de migración de deudas técnicas (Bloque 0) debe ejecutarse y validarse **antes** de escribir cualquier tabla nueva. Seguir la misma metodología: auditoría → plan → migración.
+
+---
+
+## 1. Infraestructura base: `company_modules` y `company_integrations`
+
+Estas dos tablas son el **sistema nervioso central** del SaaS. Se crean junto con las deudas técnicas (Bloque 0) porque todo lo demás las referenciará.
+
+### 1.1 `company_modules` — Control de módulos activos por empresa
+
+**Propósito:** Define qué módulos de FAIREX tiene activos cada empresa. Permite cobrar por módulos, activarlos/desactivarlos sin tocar código, y construir feature flags a nivel de empresa.
+
+**Campos a definir:**
+- `id` — PK
+- `company_id` → FK a `companies` (tenant)
+- `module_key` — identificador canónico del módulo: `crm | pipeline | inventario_rack | marketing | billing | reportes | calendario`
+- `is_active` — si el módulo está habilitado para esa empresa
+- `activated_at` — cuándo se activó
+- `config` JSONB — configuración específica del módulo (ej: para `inventario_rack` podría incluir `{"sync_mode": "manual" | "auto", "currency": "MXN"}`)
+- `plan_required` — qué plan mínimo requiere este módulo: `starter | pro | enterprise`
+- `created_at`, `updated_at`
+
+**Restricción de unicidad:** `UNIQUE(company_id, module_key)` — una empresa no puede tener el mismo módulo duplicado.
+
+**Módulos del sistema (valores de `module_key`):**
+
+| module_key | Descripción | Plan mínimo |
+|------------|-------------|:-----------:|
+| `crm` | CRM Core + Conversaciones | starter |
+| `pipeline` | Vista Kanban + etapas | starter |
+| `ai_scoring` | Motor IA scoring y análisis | starter |
+| `inventario_rack` | Catálogo + Stock + Cotizaciones | pro |
+| `marketing` | Campañas e inteligencia de marketing | pro |
+| `reportes` | Analytics avanzados y exportación | pro |
+| `calendario` | Calendario inteligente | pro |
+| `billing` | Gestión de suscripciones | enterprise |
+| `white_label` | Branding personalizado | enterprise |
+
+**Regla de negocio:** Al crear una empresa nueva (onboarding), se insertan automáticamente los módulos del plan contratado con `is_active = true`. Esto ocurre en el **Server Action de onboarding**, no en el trigger de DB (respetando la regla inamovible del trigger Fase 5).
+
+---
+
+### 1.2 `company_integrations` — Control de integraciones externas por empresa
+
+**Propósito:** Gestiona las conexiones de cada empresa con servicios externos: canales de mensajería, plataformas de publicidad, herramientas de inventario, CRMs externos, etc.
+
+**Campos a definir:**
+- `id` — PK
+- `company_id` → FK a `companies`
+- `integration_key` — identificador canónico: `whatsapp | facebook | instagram | tiktok | rack | google_ads | meta_ads | email_smtp | telegram`
+- `is_active` — si la integración está conectada y activa
+- `status` — estado de la conexión: `connected | disconnected | error | pending_auth | syncing`
+- `credentials` JSONB **[ENCRYPTED]** — tokens, API keys, webhooks (nunca exponer al frontend directamente)
+- `config` JSONB — configuración pública de la integración (sin secretos): número de línea, nombre de página, modo de sincronización
+- `last_sync_at` — última sincronización exitosa (crucial para Rack)
+- `last_error` TEXT — último error de sincronización
+- `sync_frequency` — `manual | realtime | hourly | daily` (para integraciones como Rack)
+- `created_at`, `updated_at`
+
+**Restricción de unicidad:** `UNIQUE(company_id, integration_key)` — una empresa tiene una sola instancia de cada integración (multi-línea WhatsApp usa array en `config`, no filas separadas).
+
+**Integraciones del sistema (valores de `integration_key`):**
+
+| integration_key | Tipo | Dirección datos | Sincronización |
+|----------------|------|:--------------:|:------------:|
+| `whatsapp` | Canal mensajería | Bidireccional | Realtime (webhook n8n) |
+| `facebook` | Canal mensajería | Bidireccional | Realtime (webhook n8n) |
+| `instagram` | Canal mensajería | Bidireccional | Realtime (webhook n8n) |
+| `telegram` | Canal mensajería | Bidireccional | Realtime (webhook n8n) |
+| `email_smtp` | Canal mensajería | Bidireccional | On-demand |
+| `rack` | Inventario externo | **Rack → Supabase** | Manual / Programada |
+| `meta_ads` | Publicidad | Lectura | Daily |
+| `google_ads` | Publicidad | Lectura | Daily |
+| `tiktok_ads` | Publicidad | Lectura | Daily |
+
+> [!NOTE]
+> La columna `credentials` debe nunca llegar al cliente. El Server Action que la gestiona usa `service_role` y devuelve al frontend solo la parte de `config` (campos no sensibles). RLS debe bloquear `SELECT` de `credentials` para el rol `authenticated`.
+
+---
+
+## 2. Arquitectura de sincronización Rack → Supabase
+
+### 2.1 Principio: Supabase como única fuente de verdad
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FLUJO DE DATOS                           │
+│                                                             │
+│  RACK (externo)                                             │
+│  ├── Tiene su propia DB de productos/stock                  │
+│  └── Cuando cambia algo → llama webhook FAIREX              │
+│                │                                            │
+│                ▼                                            │
+│  FAIREX API Route: POST /api/integrations/rack/sync         │
+│  ├── Valida firma del webhook (HMAC secret compartido)      │
+│  ├── Transforma datos al schema de FAIREX                   │
+│  └── Escribe/actualiza en Supabase (products, inventory)    │
+│                │                                            │
+│                ▼                                            │
+│  SUPABASE (fuente de verdad)                                │
+│  ├── products        ← catálogo unificado                   │
+│  ├── inventory_items ← stock actualizado                    │
+│  └── inventory_movements ← historial de cambios            │
+│                │                                            │
+│       ┌────────┴────────┐                                   │
+│       ▼                 ▼                                   │
+│  BOT (n8n)         DASHBOARD (Next.js)                      │
+│  Lee de Supabase   Lee de Supabase                          │
+│  NUNCA de Rack     NUNCA de Rack                            │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 2.2 Contrato de sincronización Rack → FAIREX
+
+La integración con Rack puede operar en dos modos configurables por empresa en `company_integrations.config`:
+
+**Modo A — Push (Rack notifica a FAIREX):**
+- Rack tiene configurado un webhook que apunta a FAIREX
+- Ante cada cambio en stock o catálogo, Rack hace `POST /api/integrations/rack/sync`
+- FAIREX valida, transforma y persiste en Supabase
+- Latencia baja, requiere configuración en Rack
+
+**Modo B — Pull (FAIREX consulta a Rack periódicamente):**
+- FAIREX tiene un cron job (n8n o Supabase Edge Function)
+- Cada N horas consulta la API de Rack
+- Transforma y sincroniza a Supabase
+- Sin dependencia de configuración en Rack, latencia mayor
+
+**Regla operativa:** En ambos modos, el campo `company_integrations.last_sync_at` se actualiza al finalizar la sincronización. Si el sync falla, se registra en `last_error` y se crea una `notification` al administrador de la empresa.
+
+### 2.3 Garantía: el BOT nunca depende de Rack
+
+```
+✅ BOT lee lead_memory.necesidades → busca en products (Supabase)
+✅ BOT verifica disponibilidad → lee inventory_items (Supabase)
+✅ BOT genera cotización → crea quote (Supabase)
+❌ BOT NO llama a Rack API
+❌ BOT NO espera respuesta de Rack para contestar
+❌ BOT NO falla si Rack está offline
+```
+
+Si Rack está offline, el BOT sigue respondiendo con los últimos datos sincronizados en Supabase. La UI mostrará el badge `last_sync_at` para que el usuario sepa qué tan recientes son los datos.
+
+---
+
+## 3. Fases de implementación del módulo Inventario Rack
+
+### Fase 0 — Fundación (prerequisito)
+**Objetivo:** Deudas técnicas + infraestructura base. Sin esto, nada más funciona.
+
+**Tablas que se crean/corrigen:**
+- Deuda DT-1: Policies RLS para `company_members`
+- Deuda DT-2: Policies RLS para `tasks`, `notifications`, `company_settings`
+- Deuda DT-3: Consolidar `profiles` vs `user_profiles`
+- Deuda DT-4: Unificar tipo de `company_id`
+- 🆕 `company_modules` — infraestructura de módulos
+- 🆕 `company_integrations` — infraestructura de integraciones
+
+**¿Puede una empresa vender con esto?** No. Es fundación invisible.
+
+---
+
+### Fase 1 — MVP Catálogo (mínimo para vender con catálogo)
+**Objetivo:** Una empresa puede cargar sus productos y enviar una cotización a un lead. Sin stock, sin movimientos, sin almacenes. El vendedor opera desde FAIREX.
+
+**Tablas que se crean:**
+- 🆕 `products` — catálogo de productos/servicios
+- 🆕 `quotes` — cotizaciones ligadas a leads
+- 🆕 `quote_items` — líneas de la cotización
+
+**¿Puede una empresa vender con esto?** ✅ **Sí.** El vendedor carga sus productos, abre el perfil de un lead y genera una cotización en 30 segundos. El agente IA puede mencionar productos y precios en conversación.
+
+**Capacidades desbloqueadas:**
+- Catálogo de productos por empresa (multiempresa)
+- Creación manual de cotizaciones desde el perfil del lead
+- Generación automática de borrador de cotización cuando IA detecta `listo_cerrar = true`
+- Historial de cotizaciones por lead
+- KPI básico: cotizaciones enviadas vs aprobadas
+
+---
+
+### Fase 2 — Stock básico (inventario real sin movimientos detallados)
+**Objetivo:** Conocer cuánto hay de cada producto. Sin historial granular, sin multi-almacén.
+
+**Tablas que se crean:**
+- 🆕 `inventory_items` — stock actual por producto (un solo almacén implícito: "default")
+
+**Alteraciones a tablas existentes:**
+- `products` ← agregar `stock_quantity`, `min_stock` (columnas nuevas, nullable)
+
+**¿Por qué no crear `inventory_items` en Fase 1?** Porque muchos clientes de FAIREX venden **servicios** (no bienes físicos). Forzar stock desde el inicio es agregar complejidad innecesaria para ese segmento.
+
+**Capacidades desbloqueadas:**
+- Ver cuántas unidades quedan de cada producto
+- Alertas de stock bajo (< `min_stock`)
+- Al aprobar una cotización, el stock disminuye automáticamente
+- Integración Rack activa: Rack puede sincronizar stock vía webhook
+
+---
+
+### Fase 3 — Movimientos de inventario (trazabilidad)
+**Objetivo:** Auditoría completa de cada entrada y salida.
+
+**Tablas que se crean:**
+- 🆕 `inventory_movements` — historial inmutable de movimientos
+
+**Capacidades desbloqueadas:**
+- Historial completo: quién movió qué, cuándo y por qué
+- Reporte de rotación de inventario
+- Reconciliación entre datos de Rack y datos de FAIREX
+- Detección de discrepancias en sincronización
+
+---
+
+### Fase 4 — Multi-almacén (para empresas con sucursales)
+**Objetivo:** Inventario distribuido en múltiples ubicaciones.
+
+**Tablas que se crean:**
+- 🆕 `warehouses` — almacenes de la empresa
+
+**Alteraciones a tablas existentes:**
+- `inventory_items` ← agregar `warehouse_id` FK a `warehouses`
+
+**¿Por qué tan tarde?** La mayoría de clientes iniciales de FAIREX tienen un solo punto de inventario. Agregar multi-almacén antes de que el cliente lo pida introduce complejidad de UX innecesaria.
+
+---
+
+### Fase 5 — Variantes de producto (para negocios con SKU complejos)
+**Objetivo:** Productos con atributos variables (talla, color, configuración).
+
+**Tablas que se crean:**
+- 🆕 `product_variants` — variantes del producto base
+- 🆕 `product_attributes` — definición de atributos (color, talla, etc.)
+
+**¿Por qué al final?** Es el caso de uso más complejo y el menos urgente. Un catálogo de productos simple cubre el 80% de los negocios objetivo de FAIREX en Fase 1.
+
+---
+
+## 4. Conjunto mínimo de tablas para que un cliente pueda vender inmediatamente
+
+### 4.1 Las 5 tablas del MVP vendible (Fase 0 + Fase 1)
+
+```
+FASE 0 (infraestructura)
+├── company_modules         ← Qué módulos tiene activos la empresa
+└── company_integrations    ← Qué integraciones tiene conectadas
+
+FASE 1 (operación)
+├── products                ← Qué vende la empresa
+├── quotes                  ← A quién le cotizó
+└── quote_items             ← Qué le cotizó y a qué precio
+```
+
+**Total: 5 tablas nuevas para un MVP completamente funcional y vendible.**
+
+### 4.2 Campos mínimos por tabla (Fase 1)
+
+#### `products`
+```
+id              UUID PK
+company_id      → companies (RLS)
+name            TEXT NOT NULL
+description     TEXT
+sku             TEXT UNIQUE por empresa
+unit            TEXT ('pieza','kg','hora','servicio','otro')
+base_price      DECIMAL(12,2)
+currency        TEXT DEFAULT 'MXN'
+category        TEXT
+is_active       BOOLEAN DEFAULT true
+rack_product_id TEXT  ← ID externo de Rack (para sync)
+created_at, updated_at
+```
+
+#### `quotes`
+```
+id              UUID PK
+company_id      → companies (RLS)
+lead_id         → clientes.id
+lead_memory_id  → lead_memory.id  (contexto IA)
+assigned_to     → company_members.id
+status          TEXT ('borrador','enviada','aprobada','rechazada','expirada')
+total_amount    DECIMAL(14,2)
+currency        TEXT DEFAULT 'MXN'
+valid_until     DATE
+notes           TEXT
+source          TEXT ('manual','ai_auto','rack_sync')
+created_at, updated_at
+```
+
+#### `quote_items`
+```
+id              UUID PK
+quote_id        → quotes.id ON DELETE CASCADE
+product_id      → products.id
+quantity        DECIMAL(10,2)
+unit_price      DECIMAL(12,2)    ← precio al momento de cotizar
+discount_pct    DECIMAL(5,2) DEFAULT 0
+subtotal        DECIMAL(14,2)    ← calculado: qty * unit_price * (1 - discount/100)
+notes           TEXT
+```
+
+> [!NOTE]
+> No hay `warehouse_id` en Fase 1. No hay `stock_quantity` en `products` en Fase 1 (se agrega en Fase 2). El campo `rack_product_id` en `products` es el gancho para la sincronización futura con Rack — presente desde el inicio pero nullable.
+
+---
+
+## 5. Relaciones completas entre tablas (vista por fase)
+
+### 5.1 Mapa relacional al final de Fase 1 (MVP)
+
+```
+companies ──────────────────────────────────────────────────┐
+    │                                                        │
+    ├──(n) company_modules    ← módulos activos              │
+    ├──(n) company_integrations ← integraciones              │
+    ├──(n) company_members    ← equipo de la empresa         │
+    ├──(n) products           ← catálogo                     │
+    │           │                                            │
+    │           └──(n) quote_items                           │
+    │                     │                                  │
+    └──(n) quotes ─────────┘                                 │
+               │                                             │
+               ├──(1) clientes      ← lead que recibe la cot│
+               ├──(1) lead_memory   ← contexto IA del lead  │
+               └──(1) company_members ← vendedor asignado   │
+```
+
+### 5.2 Mapa relacional al final de Fase 4 (multi-almacén)
+
+```
+companies
+    │
+    ├──(n) products
+    │           │
+    │           └──(n) inventory_items ──(1) warehouses
+    │                         │
+    │                         └──(n) inventory_movements
+    ├──(n) warehouses
+    ├──(n) quotes
+    │           │
+    │           └──(n) quote_items ──(1) products
+    └──(n) company_modules
+    └──(n) company_integrations
+```
+
+### 5.3 Relación con n8n y el BOT
+
+```
+lead_memory.necesidades ──► Server Action: busca products por texto/categoría
+lead_memory.listo_cerrar ──► n8n llama POST /api/quotes/create-draft
+quotes.status = 'aprobada' ──► Server Action: actualiza inventory_items.stock_quantity
+company_integrations.rack ──► POST /api/integrations/rack/sync ──► actualiza products + inventory_items
+```
+
+---
+
+## 6. Orden exacto de implementación
+
+### Bloque 0 — Deudas técnicas + Fundación
+**Archivo:** `migration_phase_6_foundation.sql`  
+**Contenido:**
+1. Corregir tipo `company_id` (unificar UUID o BIGINT)
+2. Consolidar `profiles` (eliminar ambigüedad con `user_profiles`)
+3. Agregar policies RLS a `company_members`, `tasks`, `notifications`, `company_settings`
+4. Crear tabla `company_modules`
+5. Crear tabla `company_integrations`
+6. Policies RLS para `company_modules` y `company_integrations`
+7. Backfill: insertar módulos CRM/Pipeline/AI por defecto para empresa ID=1
+
+**Validación:** Todos los queries del dashboard funcionan. No hay tablas con RLS sin policies.
+
+---
+
+### Bloque 1 — Catálogo MVP
+**Archivo:** `migration_phase_7_products.sql`  
+**Contenido:**
+1. Crear tabla `products`
+2. Crear tabla `quotes`
+3. Crear tabla `quote_items`
+4. Policies RLS para las 3 tablas
+5. Insertar `module_key = 'inventario_rack'` en `company_modules` (empresa ID=1, `is_active = false` por defecto)
+
+**Validación:** Un vendedor puede crear un producto y generar una cotización desde el perfil de un lead.
+
+---
+
+### Bloque 2 — Server Actions MVP (Next.js)
+**No es migración SQL — es código Next.js**  
+**Archivos en:** `src/lib/services/inventory.ts` + `src/lib/services/quotes.ts`
+
+Server Actions a implementar en este bloque:
+
+| Action | Descripción |
+|--------|-------------|
+| `getProducts(filters?)` | Listar catálogo activo |
+| `createProduct(data)` | Crear producto |
+| `updateProduct(id, data)` | Editar producto |
+| `archiveProduct(id)` | Desactivar |
+| `getQuotesByLead(leadId)` | Historial de cotizaciones del lead |
+| `createQuote(leadId, items[])` | Crear cotización manualmente |
+| `updateQuoteStatus(id, status)` | Cambiar estado de cotización |
+| `createDraftQuoteFromLead(leadMemoryId)` | Auto-cotización desde IA |
+
+---
+
+### Bloque 3 — API Routes para n8n y Rack
+**Archivos en:** `src/app/api/`
+
+| Ruta | Método | Propósito |
+|------|--------|-----------|
+| `/api/quotes/create-draft` | POST | n8n genera cotización cuando lead está listo |
+| `/api/products/search` | GET | n8n busca productos para contexto del BOT |
+| `/api/integrations/rack/sync` | POST | Rack sincroniza catálogo/stock a Supabase |
+
+Todas requieren validación de firma HMAC (secret en `company_integrations.credentials`).
+
+---
+
+### Bloque 4 — UI Inventario (Next.js pages)
+**Rutas nuevas en:** `src/app/(dashboard)/inventory/`
+
+| Ruta | Vista |
+|------|-------|
+| `/inventory` | Dashboard de inventario (KPIs) |
+| `/inventory/products` | Lista + gestión de catálogo |
+| `/inventory/products/new` | Formulario nuevo producto |
+| `/inventory/products/[id]` | Detalle y edición |
+| `/inventory/quotes` | Lista de cotizaciones |
+| `/inventory/quotes/[id]` | Detalle de cotización |
+
+Y extensión de la vista de lead:
+| `/leads/[id]` | Agregar tab "Cotizaciones" |
+
+---
+
+### Bloque 5 — Stock real (Fase 2, post-MVP)
+**Archivo:** `migration_phase_8_inventory_stock.sql`  
+**Contenido:**
+1. Agregar columnas `stock_quantity`, `min_stock`, `rack_stock_sync` a `products`
+2. Crear tabla `inventory_items` (con warehouse_id nullable)
+3. Políticas RLS
+4. Trigger: cuando `quotes.status` cambia a `aprobada`, decrementar `products.stock_quantity`
+
+---
+
+### Bloque 6 — Movimientos + Almacenes + Variantes (Fases 3-5)
+**Solo cuando el cliente lo pida.** No antes.
+
+---
+
+## 7. Reglas de arquitectura inamovibles para este módulo
+
+1. **Supabase es la fuente de verdad.** Rack es un proveedor de datos, no el sistema principal.
+2. **El BOT nunca llama a Rack.** Solo lee de Supabase. Si Rack está caído, el BOT sigue funcionando.
+3. **El trigger `on_auth_user_created` no se toca.** La activación de módulos va en Server Actions de onboarding.
+4. **n8n no modifica `products`, `quotes` ni `inventory_items` directamente.** Solo puede escribir en `lead_memory` (como siempre). Las cotizaciones automáticas se crean vía API Route que invoca Server Action.
+5. **`company_integrations.credentials` nunca llega al frontend.** El Server Action de configuración de integraciones devuelve solo `config` (campos no sensibles).
+6. **Toda tabla nueva lleva `company_id` y RLS desde el primer día.** Sin excepciones.
+7. **Las columnas de sync externo son nullable.** `rack_product_id` en `products` puede ser NULL para empresas que no usan Rack.

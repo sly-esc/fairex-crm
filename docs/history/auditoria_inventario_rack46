@@ -1,0 +1,437 @@
+# Auditoría Arquitectónica — Módulo Inventario Rack
+**FAIREX AI Business OS**  
+Fecha: 2026-07-12 | Tipo: Auditoría de estado actual · Plan técnico
+
+---
+
+> [!IMPORTANT]
+> Este documento es **solo auditoría y plan técnico**. Ninguna migración ni código fue generado. La metodología sigue el mismo principio rector del documento `fairex_v2_compatibility_audit.md`: evolución, no reconstrucción. El motor n8n y los workflows existentes son intocables.
+
+---
+
+## 1. Tablas relacionadas con inventario que YA existen en Supabase
+
+### 1.1 Hallazgo directo: **cero tablas de inventario**
+
+Tras revisar las 5 migraciones aplicadas, **no existe ninguna tabla** relacionada con:
+
+| Concepto | ¿Existe? | Observación |
+|----------|:--------:|-------------|
+| `products` / `productos` | ❌ | No creada |
+| `inventory` / `inventario` | ❌ | No creada |
+| `sku` / `catalog` / `catálogo` | ❌ | No creada |
+| `warehouses` / `almacenes` | ❌ | No creada |
+| `quotes` / `cotizaciones` | ❌ | No creada |
+| `order_items` / `line_items` | ❌ | No creada |
+
+### 1.2 Tablas que SÍ existen (inventario completo del esquema actual)
+
+Estas son **todas** las tablas confirmadas en las migraciones:
+
+| Tabla | Origen | Estado RLS | Propósito |
+|-------|--------|:----------:|-----------|
+| `companies` | Migration 0001 | ✅ ON | Multi-tenancy — tenant maestro |
+| `company_members` | Migration 0001 | ❌ sin policy | Relación usuario ↔ empresa + roles |
+| `user_profiles` | Migration 0001 | ❌ sin policy | Perfil extendido del usuario |
+| `tasks` | Migration 0001 | ❌ sin policy | Tareas manuales y auto-generadas IA |
+| `notifications` | Migration 0001 | ❌ sin policy | Alertas in-app |
+| `company_settings` | Migration 0001 | ❌ sin policy | Config IA, scoring, pipeline, branding |
+| `profiles` | Fase 3 (rename de `users`) | ✅ ON (policy select+update) | Autenticación de usuarios |
+| `lead_memory` | Pre-existente (n8n) | ✅ ON (policy select+update) | Cerebro IA de leads — TABLA SAGRADA |
+| `n8n_chat_histories` | Pre-existente (n8n) | ✅ ON (policy select) | Mensajes raw de conversaciones |
+| `clientes` | Pre-existente (n8n) | ❌ sin policy visible | Datos del lead/cliente |
+| `conversaciones` | Pre-existente (n8n) | ❌ sin policy visible | Sesiones de chat |
+
+> [!WARNING]
+> Las tablas `clientes`, `conversaciones`, `company_members`, `tasks`, `notifications` y `company_settings` tienen RLS habilitado a nivel de tabla (`ENABLE`) pero **no tienen políticas declaradas** en las migraciones revisadas. Esto significa que están bloqueadas para usuarios autenticados hasta que se escriban sus políticas. Es una deuda técnica activa independiente del módulo inventario.
+
+### 1.3 Columna relevante detectada: `valor_estimado`
+
+En la Migration 0001 se agregó a `clientes`:
+```
+valor_estimado  DECIMAL(12,2)
+```
+Esta columna es el único campo monetario existente. Actualmente representa el valor estimado del deal. **No es inventario**, pero es la semilla de un módulo de oportunidades comerciales.
+
+---
+
+## 2. Tablas actuales que podrían reutilizarse
+
+### 2.1 Reutilización directa (sin modificar estructura)
+
+| Tabla | Qué aporta al inventario |
+|-------|--------------------------|
+| `companies` | Aislamiento multiempresa — cada empresa tendrá su propio catálogo. FK obligatoria en todas las tablas nuevas. |
+| `company_members` | Para asignar responsables de inventario (quién puede editar, quién solo consulta). |
+| `lead_memory` | Campo `necesidades` ya capturado por IA — contiene qué productos/servicios busca el lead. Puente natural hacia cotizaciones. |
+| `n8n_chat_histories` | Contexto de conversación — el agente IA podría leer el catálogo para responder preguntas de precio/disponibilidad. |
+| `clientes` | `valor_estimado` ya existe como placeholder del valor del deal. Sería enriquecido por cotizaciones reales. |
+| `tasks` | Tabla de tareas puede recibir eventos de inventario: "Stock bajo — reponer", "Cotización aprobada — preparar pedido". |
+| `notifications` | Sistema de alertas ya funcional. Puede disparar alertas de stock bajo, cotización enviada, etc. |
+
+### 2.2 Columnas de `lead_memory` con valor para el inventario
+
+```
+necesidades        → "¿Qué necesita el lead?" — match con catálogo
+objeciones         → "¿Por qué no compra?" — puede ser precio o disponibilidad
+etapa_venta        → Saber si el lead está listo para recibir cotización
+listo_cerrar       → Trigger natural para generar cotización automática
+score_lead         → Priorizar a qué leads mostrar disponibilidad de stock
+```
+
+---
+
+## 3. Tablas nuevas necesarias para inventario multiempresa
+
+El módulo Inventario Rack requiere **6 tablas nuevas** como núcleo mínimo viable, organizadas en dos capas: catálogo y operación.
+
+### 3.1 Capa Catálogo (qué se vende)
+
+#### `products` — Catálogo maestro de productos/servicios
+Contiene la definición del producto. Multiempresa desde el primer día.
+
+Campos clave a definir:
+- `company_id` → FK a `companies` (obligatorio, tenant isolation)
+- `name`, `description`, `category`
+- `unit` → unidad de medida (pieza, kg, hora, servicio)
+- `base_price` → precio de referencia
+- `sku` → código único por empresa
+- `is_active` → visibilidad en catálogo
+- `metadata` JSONB → extensible (atributos variables: color, talla, etc.)
+- `created_at`, `updated_at`
+
+#### `product_variants` — Variantes por SKU (opcional pero recomendado)
+Para empresas con productos con variantes (talla, color, configuración).
+Solo si el negocio lo requiere. Muchos casos de uso de FAIREX son servicios, no bienes.
+
+Evaluación: **incluir como tabla desde el inicio pero vacía** para no tener que migrar después.
+
+---
+
+### 3.2 Capa Stock (cuánto hay)
+
+#### `warehouses` — Almacenes o ubicaciones
+Permite inventario multi-ubicación por empresa.
+
+Campos clave:
+- `company_id` → FK a `companies`
+- `name` → "Bodega Central", "Sucursal Norte", "Virtual"
+- `location` → texto o coordenadas
+- `is_default` → para empresas con una sola bodega
+
+#### `inventory_items` — Stock real por producto y almacén
+La tabla operativa central. Une producto con almacén y cantidad.
+
+Campos clave:
+- `company_id` → FK a `companies`
+- `product_id` → FK a `products`
+- `warehouse_id` → FK a `warehouses`
+- `quantity` → stock actual
+- `reserved_quantity` → cantidad comprometida en cotizaciones pendientes
+- `min_stock` → umbral para alerta de reposición
+- `max_stock` → techo de inventario
+- `last_updated_at`
+
+#### `inventory_movements` — Historial de movimientos
+Registro inmutable de entradas, salidas y ajustes.
+
+Campos clave:
+- `company_id` → FK a `companies`
+- `inventory_item_id` → FK a `inventory_items`
+- `movement_type` → `entrada | salida | ajuste | reserva | liberacion`
+- `quantity` → puede ser positivo o negativo
+- `reason` → motivo del movimiento
+- `reference_id` → FK polimórfica a `quotes.id` u otro origen
+- `created_by` → FK a `profiles`
+- `created_at`
+
+---
+
+### 3.3 Capa Comercial (cotizaciones)
+
+#### `quotes` — Cotizaciones / Propuestas comerciales
+Vincula leads con productos. Es el puente entre CRM e Inventario.
+
+Campos clave:
+- `company_id` → FK a `companies`
+- `lead_id` → FK a `clientes.id` (el lead que cotiza)
+- `lead_memory_id` → FK a `lead_memory.id` (contexto IA)
+- `assigned_to` → FK a `company_members.id` (vendedor responsable)
+- `status` → `borrador | enviada | aprobada | rechazada | expirada`
+- `total_amount` → calculado a partir de line items
+- `valid_until` → fecha de expiración
+- `notes` → observaciones internas
+- `created_at`, `updated_at`
+
+#### `quote_items` — Líneas de la cotización
+Detalle de qué productos y en qué cantidad.
+
+Campos clave:
+- `quote_id` → FK a `quotes`
+- `product_id` → FK a `products`
+- `quantity`
+- `unit_price` → precio al momento de cotizar (puede diferir del `base_price`)
+- `discount` → descuento en porcentaje o valor
+- `subtotal` → calculado
+
+---
+
+### 3.4 Resumen de tablas nuevas
+
+```
+CAPA CATÁLOGO
+├── products              ← Qué ofrece la empresa
+└── product_variants      ← Variantes (opcional por negocio)
+
+CAPA STOCK
+├── warehouses            ← Dónde está el inventario
+├── inventory_items       ← Cuánto hay de cada producto
+└── inventory_movements   ← Historial de cambios (inmutable)
+
+CAPA COMERCIAL
+├── quotes                ← Propuestas/cotizaciones a leads
+└── quote_items           ← Líneas de la cotización
+```
+
+**Total: 7 tablas nuevas** (6 core + 1 opcional en Fase 1)
+
+---
+
+## 4. Relaciones propuestas entre companies, products, lead_memory y el nuevo inventario
+
+### 4.1 Diagrama de relaciones (textual)
+
+```
+companies (1)
+    │
+    ├─── (n) company_members          → Quién gestiona inventario
+    │
+    ├─── (n) products                 → Catálogo de la empresa
+    │         │
+    │         └─── (n) product_variants
+    │         └─── (n) inventory_items
+    │                   │
+    │                   ├─── (1) warehouses
+    │                   └─── (n) inventory_movements
+    │
+    ├─── (n) warehouses               → Almacenes de la empresa
+    │
+    └─── (n) quotes                   → Cotizaciones de la empresa
+              │
+              ├─── (1) clientes       → Lead que recibe la cotización
+              ├─── (1) lead_memory    → Contexto IA del lead
+              ├─── (1) company_members→ Vendedor asignado
+              └─── (n) quote_items
+                        │
+                        └─── (1) products → Qué productos incluye
+```
+
+### 4.2 Relación crítica: `lead_memory` ↔ `quotes`
+
+Esta es la relación más importante del módulo.
+
+```
+lead_memory.necesidades  ──► Agente IA sugiere products relevantes
+lead_memory.listo_cerrar ──► Trigger para generar quote automático
+lead_memory.etapa_venta  ──► Solo mostrar cotización en etapas avanzadas
+quotes.lead_memory_id    ──► Traza el contexto de por qué se cotizó eso
+quotes.status='aprobada' ──► Dispara inventory_movement (salida reservada)
+```
+
+### 4.3 Integridad multiempresa (RLS)
+
+Todas las tablas nuevas heredan el mismo patrón ya establecido en el proyecto:
+
+```
+USING (company_id = public.get_my_company_id())
+```
+
+La función `get_my_company_id()` ya existe y está en producción (Migration Fase 4). No requiere cambios.
+
+### 4.4 Regla de negocio: `reserved_quantity`
+
+Cuando una cotización pasa a `aprobada`:
+1. Se crea un `inventory_movement` de tipo `reserva`
+2. `inventory_items.reserved_quantity` aumenta
+3. `stock_disponible = quantity - reserved_quantity`
+
+Cuando la cotización es `rechazada` o `expirada`:
+1. Se crea un `inventory_movement` de tipo `liberacion`
+2. `reserved_quantity` disminuye
+
+Este ciclo debe ser manejado por **Server Actions o triggers de DB**, nunca desde n8n directamente (para mantener separación de responsabilidades).
+
+---
+
+## 5. Qué partes de n8n consumirían el inventario
+
+> [!IMPORTANT]
+> La regla de oro sigue siendo: **n8n no se modifica**. n8n ESCRIBE en las tablas existentes y **PUEDE LEER** las nuevas vía Supabase REST API con `service_role`. El inventario se añade como **fuente de contexto adicional** para los agentes IA existentes.
+
+### 5.1 Agente IA Principal (Análisis de conversación)
+**Consumo actual:** `lead_memory`, `n8n_chat_histories`  
+**Consumo nuevo propuesto:** + `products` (para reconocer menciones de productos en conversación)
+
+Cuando el lead menciona un producto o servicio específico, el agente puede:
+- Confirmar disponibilidad en tiempo real
+- Incluir el precio en la respuesta
+- Marcar `lead_memory.necesidades` con el SKU específico
+
+**Mecanismo:** n8n agrega un nodo Supabase que consulta `products` por `company_id`. Sin modificar el workflow principal — se agrega como sub-workflow optativo.
+
+### 5.2 Agente FollowUp IA
+**Consumo actual:** `lead_memory` para generar mensaje de reactivación  
+**Consumo nuevo propuesto:** + `quotes` (para mencionar cotización enviada que no fue respondida)
+
+Ejemplo: "Hola, te envié una cotización el [fecha], ¿pudiste revisarla?"
+
+### 5.3 Agente Hot Lead Detector
+**Consumo actual:** `lead_memory.score_lead` + `lead_memory.listo_cerrar`  
+**Consumo nuevo propuesto:** Cuando `listo_cerrar = true`, puede disparar la creación automática de un borrador de cotización en `quotes` via webhook.
+
+**Mecanismo:** n8n llama a un Next.js API Route `/api/quotes/create-draft` con el `lead_memory_id`. El Server Action crea el borrador de cotización sin que n8n conozca el modelo de datos interno.
+
+### 5.4 Agente Retargeting IA
+**Sin cambios en n8n.** El inventario puede enriquecer el prompt del retargeting con el catálogo actualizado de la empresa, pero esto es optimización de Fase 2.
+
+### 5.5 Resumen de impacto en n8n
+
+| Workflow n8n | Cambio requerido | Prioridad |
+|--------------|-----------------|-----------|
+| Agente principal | Nodo extra: query a `products` por company_id | Fase 2 |
+| FollowUp IA | Nodo extra: leer `quotes` activas por lead | Fase 2 |
+| Hot Lead Detector | Webhook a `/api/quotes/create-draft` | Fase 1 |
+| Retargeting IA | Sin cambios en MVP | Fase 3 |
+
+---
+
+## 6. Server Actions de Next.js que necesitarían existir
+
+### 6.1 Catálogo de Productos
+
+| Server Action | Descripción | Lectura/Escritura |
+|---------------|-------------|:-----------------:|
+| `getProducts(filters?)` | Listar productos del catálogo activo de la empresa | 📖 R |
+| `getProductById(id)` | Detalle de un producto incluyendo stock actual | 📖 R |
+| `createProduct(data)` | Crear producto en catálogo (requiere rol: owner/director) | ✏️ W |
+| `updateProduct(id, data)` | Editar producto (precio, nombre, estado activo) | ✏️ W |
+| `archiveProduct(id)` | Desactivar producto del catálogo (`is_active = false`) | ✏️ W |
+| `searchProducts(query)` | Búsqueda de productos por nombre/SKU/categoría | 📖 R |
+
+### 6.2 Almacenes
+
+| Server Action | Descripción | Lectura/Escritura |
+|---------------|-------------|:-----------------:|
+| `getWarehouses()` | Listar almacenes de la empresa | 📖 R |
+| `createWarehouse(data)` | Crear nuevo almacén | ✏️ W |
+| `updateWarehouse(id, data)` | Editar almacén | ✏️ W |
+
+### 6.3 Inventario / Stock
+
+| Server Action | Descripción | Lectura/Escritura |
+|---------------|-------------|:-----------------:|
+| `getInventoryByProduct(productId)` | Stock por producto en todos los almacenes | 📖 R |
+| `getInventoryByWarehouse(warehouseId)` | Todo el stock de un almacén | 📖 R |
+| `getLowStockAlerts()` | Productos bajo mínimo de stock | 📖 R |
+| `adjustStock(itemId, qty, reason)` | Ajuste manual de inventario + registro en `inventory_movements` | ✏️ W |
+| `getInventoryMovements(productId, filters?)` | Historial de movimientos de un producto | 📖 R |
+| `reserveStock(productId, qty, quoteId)` | Reservar stock al aprobar cotización | ✏️ W |
+| `releaseStock(quoteId)` | Liberar reserva si cotización es rechazada/expirada | ✏️ W |
+
+### 6.4 Cotizaciones
+
+| Server Action | Descripción | Lectura/Escritura |
+|---------------|-------------|:-----------------:|
+| `getQuotesByLead(leadId)` | Cotizaciones de un lead específico | 📖 R |
+| `getQuotesByStatus(status)` | Listar cotizaciones por estado | 📖 R |
+| `getQuoteDetail(id)` | Detalle completo con line items | 📖 R |
+| `createQuote(leadId, items[])` | Crear cotización con sus líneas | ✏️ W |
+| `createDraftQuoteFromLead(leadMemoryId)` | Crear borrador automático (llamado desde n8n vía API Route) | ✏️ W |
+| `updateQuoteStatus(id, status)` | Cambiar estado + efectos secundarios (reserva/liberación de stock) | ✏️ W |
+| `addQuoteItem(quoteId, productId, qty, price)` | Agregar producto a cotización | ✏️ W |
+| `removeQuoteItem(itemId)` | Eliminar línea de cotización | ✏️ W |
+| `calculateQuoteTotal(quoteId)` | Recalcular total (puede ser función DB también) | 📖 R |
+
+### 6.5 Dashboard / Analytics de Inventario
+
+| Server Action | Descripción | Lectura/Escritura |
+|---------------|-------------|:-----------------:|
+| `getInventorySummary()` | KPIs: total productos, valor total stock, alertas activas | 📖 R |
+| `getQuotesFunnel()` | Cotizaciones por estado (para dashboard ejecutivo) | 📖 R |
+| `getTopProductsByQuotes()` | Productos más cotizados | 📖 R |
+| `getConversionRate()` | % de cotizaciones aprobadas vs enviadas | 📖 R |
+
+### 6.6 API Routes (para consumo desde n8n)
+
+| API Route | Propósito |
+|-----------|-----------|
+| `POST /api/quotes/create-draft` | n8n llama esto cuando detecta lead listo para cerrar |
+| `GET /api/products/search?q=&company_id=` | n8n enriquece contexto del agente IA con catálogo |
+| `GET /api/inventory/availability?product_id=` | Verificar disponibilidad en tiempo real |
+
+> [!NOTE]
+> Las API Routes son el puente hacia n8n y usan `service_role` de Supabase internamente. Deben incluir validación de firma (secret compartido) para evitar llamadas no autorizadas.
+
+---
+
+## 7. Consideraciones de diseño y alertas para la implementación
+
+### 7.1 Conflicto de tipos: UUID vs BIGINT
+
+> [!CAUTION]
+> Existe un conflicto de tipos en el esquema actual. Las tablas nuevas en Migration 0001 usan `UUID` como PK, pero el trigger en Fase 5 maneja `company_id` como `BIGINT`. La migración de consolidación Fase 3 también usa `bigint`. Las tablas nuevas de inventario deben definir desde el inicio qué tipo usan para `company_id` — y debe ser el mismo tipo que `companies.id`. Verificar el tipo real en producción antes de crear las migraciones.
+
+### 7.2 Tabla `profiles` vs `user_profiles`
+
+Las migraciones tienen **dos tablas** de perfil:
+- `user_profiles` → creada en Migration 0001
+- `profiles` → renombrada de `users` en Fase 3, con `auth_user_id` y RLS activo
+
+El código en `queries.ts` usa `profiles` (con `auth_user_id`). Las Server Actions del inventario deben usar `profiles` consistentemente, no `user_profiles`.
+
+### 7.3 Deuda técnica detectada: `company_members` sin RLS policy
+
+La tabla `company_members` tiene RLS habilitado pero sin policies declaradas. Esto bloquea cualquier consulta de roles desde el dashboard. Al implementar el inventario, necesitará leer `company_members` para verificar permisos (solo owner/director pueden crear/editar productos). **Esta deuda debe resolverse antes o en paralelo con el inventario.**
+
+### 7.4 Orden de construcción recomendado
+
+```
+FASE 1 — Catálogo básico (sin stock)
+├── Tabla: products
+├── Tabla: warehouses (solo default por empresa)
+├── Server Actions: getProducts, createProduct, updateProduct
+└── UI: /inventory/products (lista + formulario)
+
+FASE 2 — Stock real
+├── Tabla: inventory_items
+├── Tabla: inventory_movements
+├── Server Actions: adjustStock, getLowStockAlerts, getInventoryMovements
+└── UI: /inventory/stock + /inventory/movements
+
+FASE 3 — Cotizaciones
+├── Tabla: quotes
+├── Tabla: quote_items
+├── Server Actions: createQuote, updateQuoteStatus, reserveStock
+├── API Routes: /api/quotes/create-draft
+└── UI: /leads/:id/quotes + /inventory/quotes
+
+FASE 4 — Integración n8n
+├── API Route: /api/products/search (para agente IA)
+├── Modificación sub-workflow n8n: enriquecer contexto con catálogo
+└── UI: Dashboard de cotizaciones en panel ejecutivo
+```
+
+---
+
+## Resumen ejecutivo
+
+| Punto | Estado |
+|-------|--------|
+| Tablas de inventario existentes | **0** — todo es nuevo |
+| Tablas reutilizables del esquema actual | **7** (companies, company_members, lead_memory, clientes, tasks, notifications, profiles) |
+| Tablas nuevas necesarias (core) | **6** (products, warehouses, inventory_items, inventory_movements, quotes, quote_items) |
+| Server Actions nuevas requeridas | **~24** (entre lectura y escritura) |
+| API Routes para n8n | **3** (create-draft, search, availability) |
+| Impacto en workflows n8n existentes | **Mínimo** — solo adición de nodos de consulta, sin modificar lógica IA |
+| Patrón RLS | **Heredado** — usa `get_my_company_id()` existente |
+| Deudas técnicas a resolver antes | UUID vs BIGINT · company_members sin policies · profiles vs user_profiles |
