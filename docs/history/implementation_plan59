@@ -1,0 +1,226 @@
+# Plan: Wizard Onboarding 3–6 + Inventario + CSV Real
+
+## Contexto
+
+La Migración 7 fue ejecutada y validada. Las Fases 1–7 están activas en Supabase.
+La Migración 8 está pausada en `_drafts/`.
+
+**Objetivo comercial**: Una empresa quede operativa en <15 minutos con inventario CSV y vendedor IA.
+
+---
+
+## Hallazgos del Audit
+
+### ✅ Lo que ya funciona correctamente
+
+| Elemento | Estado | Observaciones |
+|---|---|---|
+| `companies.ts` — `createCompany` | ✅ Funcional | Inserta correctamente con `slug`, `onboarding_status` |
+| `users.ts` — `inviteAdminUser` | ✅ Funcional | Usa `adminClient` + metadata para el trigger |
+| `modules.ts` — `toggleModule` | ✅ Funcional | Upsert idempotente en `company_modules` |
+| `ai-config.ts` — `saveAiConfig` | ✅ Funcional | Escribe en `company_settings` correctamente |
+| `integrations.ts` — `saveIntegration` | ✅ Funcional | Upsert con conflict resolution correcto |
+| Tipos en `superadmin.ts` | ✅ Completos | `Company`, `CompanyModule`, `AiConfig`, `ImportResult` todos presentes |
+
+### ⚠️ Problemas identificados que requieren corrección
+
+#### Problema 1 — `companies.ts` línea 42: `onboarding_status` con valor inválido
+```ts
+onboarding_status: 'admin_setup', // ← NO ESTÁ en el CHECK constraint
+```
+El `chk_onboarding_status` solo acepta: `'pending' | 'in_progress' | 'completed' | 'suspended'`.
+Insertar `'admin_setup'` hará fallar el INSERT con un constraint violation.
+
+**Fix**: Cambiar a `'in_progress'`.
+
+#### Problema 2 — `users.ts` línea 49: mismo problema
+```ts
+onboarding_status: 'modules_setup' // ← tampoco está en el CHECK
+```
+**Fix**: Eliminar ese UPDATE o cambiar a `'in_progress'` (ya está así desde el paso 1).
+
+#### Problema 3 — CSV Importer (`route.ts`) es solo mock
+```ts
+// Por ahora, solo validamos y devolvemos el resultado sin insertar en BD.
+// En el futuro, aquí iría la llamada a la base de datos (Rack/Products).
+```
+No existe tabla `products` / `inventory` en Supabase todavía. Se necesita:
+1. Migración nueva para crear la tabla `products`.
+2. Actualizar el importer para insertar realmente.
+
+#### Problema 4 — CSV parser no maneja comillas ni separadores alternativos
+```ts
+const values = lines[i].split(',') // ← falla con campos que contienen comas dentro de comillas
+```
+Necesita un parser CSV robusto.
+
+#### Problema 5 — Wizard Paso 6 (`OnboardingWizard.tsx`): el UI muestra `{csvResult.validRows} productos listos para sincronizar` pero el importer no inserta nada
+Queda sin indicar que no fueron guardados.
+
+---
+
+## Propuesta de Cambios
+
+> [!IMPORTANT]
+> **Orden de ejecución obligatorio**: La Migración de Inventario debe ejecutarse manualmente en Supabase ANTES de que el importer pueda insertar datos. Te presentaré el SQL para aprobación antes de proceder al código.
+
+### Bloque 1 — Correcciones críticas (sin nueva migración)
+
+---
+
+#### [MODIFY] [companies.ts](file:///c:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/actions/superadmin/companies.ts)
+- Línea 42: `'admin_setup'` → `'in_progress'`
+- Sin más cambios en este archivo.
+
+#### [MODIFY] [users.ts](file:///c:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/actions/superadmin/users.ts)
+- Líneas 47–50: Eliminar el UPDATE de `onboarding_status` (ya viene como `'in_progress'` desde Step 1 y no debe retroceder).
+
+---
+
+### Bloque 2 — Migración 9: Tabla `products`
+
+#### [NEW] `supabase/migrations/migration_phase_9_inventory.sql`
+
+Nueva tabla `products` con las siguientes columnas:
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `id` | UUID PK | Identificador interno |
+| `company_id` | UUID FK → companies | Multi-tenant obligatorio |
+| `sku` | TEXT NOT NULL | Código único por empresa |
+| `nombre` | TEXT NOT NULL | Nombre del producto |
+| `descripcion` | TEXT | Descripción larga |
+| `precio` | DECIMAL(12,2) | Precio de venta |
+| `precio_costo` | DECIMAL(12,2) | Costo (opcional, privado) |
+| `stock` | INTEGER DEFAULT 0 | Unidades disponibles |
+| `stock_minimo` | INTEGER DEFAULT 0 | Alerta de stock bajo |
+| `unidad` | TEXT | Unidad de medida (pza, kg, etc.) |
+| `categoria` | TEXT | Categoría libre |
+| `imagen_url` | TEXT | URL externa de imagen |
+| `is_active` | BOOLEAN DEFAULT true | Soft delete |
+| `metadata` | JSONB | Campos adicionales flexibles |
+| `created_at` | TIMESTAMPTZ | Auto |
+| `updated_at` | TIMESTAMPTZ | Auto |
+
+**Constraints**: `UNIQUE(company_id, sku)` — el mismo SKU puede existir en empresas distintas.
+
+**RLS**: 
+- SELECT/INSERT/UPDATE: `company_id = get_my_company_id()` para `authenticated`
+- Solo `service_role` puede DELETE masivo (importador)
+
+---
+
+### Bloque 3 — CSV Importer real
+
+#### [MODIFY] [route.ts](file:///c:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/app/api/superadmin/import-csv/route.ts)
+
+Cambios:
+1. Reemplazar `split(',')` por un parser CSV que respete comillas (`"campo con, coma"`)
+2. Mapear columnas CSV a schema de `products`:
+   - `sku` → `sku`
+   - `nombre` → `nombre`
+   - `precio` → `precio` (parseFloat, nullable)
+   - `stock` → `stock` (parseInt, default 0)
+   - `descripcion` → `descripcion` (opcional)
+   - `categoria` → `categoria` (opcional)
+   - Cualquier columna extra → `metadata`
+3. Usar `upsert` con `onConflict: 'company_id,sku'` para hacer la carga idempotente
+4. Usar `service_role` client para el INSERT (bypassa RLS del importer)
+5. Reportar `insertedRows` además de `validRows`
+
+#### [MODIFY] [superadmin.ts](file:///c:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/types/superadmin.ts)
+- Agregar interfaz `Product` con el schema completo
+- Actualizar `ProductCSVRow` para reflejar las columnas reales
+- Actualizar `ImportResult` con campo `insertedRows`
+
+---
+
+### Bloque 4 — Wizard UX pasos 3–6
+
+#### [MODIFY] [OnboardingWizard.tsx](file:///c:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/app/(superadmin)/onboarding/OnboardingWizard.tsx)
+
+**Paso 3 — Módulos**: Ya funcional. Mejoras UX:
+- Agregar descripciones de módulos (qué hace cada uno)
+- Mostrar icono por módulo
+- Agrupar: "Core" vs "Canales" vs "Avanzado"
+
+**Paso 4 — IA**: Ya funcional. Sin cambios de lógica.
+
+**Paso 5 — Integraciones**: Ya funcional. Agregar texto "Opcional — puedes completar esto después".
+
+**Paso 6 — CSV**: 
+- Agregar template CSV descargable con columnas correctas
+- Mostrar vista previa de las primeras 5 filas antes de confirmar
+- Después de importar: mostrar `X productos guardados en base de datos`
+- Agregar botón "Omitir este paso" para no bloquear el onboarding
+
+---
+
+## Archivos a tocar
+
+| Archivo | Operación | Riesgo |
+|---|---|---|
+| `src/actions/superadmin/companies.ts` | MODIFY — 1 línea | 🟢 Bajo |
+| `src/actions/superadmin/users.ts` | MODIFY — 4 líneas | 🟢 Bajo |
+| `src/app/api/superadmin/import-csv/route.ts` | MODIFY — importer real | 🟡 Medio |
+| `src/types/superadmin.ts` | MODIFY — nuevas interfaces | 🟢 Bajo |
+| `src/app/(superadmin)/onboarding/OnboardingWizard.tsx` | MODIFY — UX pasos 3–6 | 🟡 Medio |
+| `supabase/migrations/migration_phase_9_inventory.sql` | NEW | 🟡 Requiere ejecución manual |
+
+---
+
+## Archivos que NO se tocan
+
+| Archivo | Razón |
+|---|---|
+| `migration_phase_6_foundation.sql` | Ya ejecutado en producción |
+| `migration_phase_7_superadmin_onboarding.sql` | Ya ejecutado y validado |
+| `_drafts/migration_phase_8_tasks_alerts.*` | Pausado por decisión comercial |
+| Cualquier archivo bajo `src/app/(dashboard)/` | Dashboard Cliente — intocable |
+| `src/app/api/n8n/` | n8n — intocable |
+
+---
+
+## Preguntas abiertas para tu aprobación
+
+> [!IMPORTANT]
+> **Pregunta 1 — Nombre de columnas CSV**
+> El importer actual espera `sku` y `nombre`. ¿Usamos `nombre` o `name` como header en el CSV?
+> Recomendación: `nombre` (es más natural para el mercado hispanohablante).
+
+> [!IMPORTANT]
+> **Pregunta 2 — Precio en CSV**
+> ¿El precio viene como `precio`, `price`, o ambos se aceptan?
+> Recomendación: aceptar `precio` y como alias `price` (normalizar al parsear).
+
+> [!IMPORTANT]
+> **Pregunta 3 — Paso de Integraciones opcional**
+> ¿Quieres que el Paso 5 (Integraciones) sea completamente saltable sin error,
+> o debe requerir al menos un canal conectado (WhatsApp o Meta)?
+> Recomendación: Hacerlo 100% opcional con botón "Omitir".
+
+---
+
+## Plan de ejecución secuencial
+
+1. ✅ Tú apruebas este plan
+2. 🔧 Correcciones críticas: `companies.ts` + `users.ts` (2 min)
+3. 📋 Te presento el SQL de `migration_phase_9_inventory.sql` para revisión
+4. ✅ Tú lo ejecutas en Supabase y confirmas
+5. 🔧 CSV Importer real: `route.ts` actualizado
+6. 🔧 Tipos actualizados: `superadmin.ts`
+7. 🔧 Wizard UX mejorado: `OnboardingWizard.tsx`
+8. 🧪 Checklist de validación final
+
+---
+
+## Verificación final
+
+Una vez completado, podrás:
+1. Crear empresa nueva en el Wizard
+2. Invitar admin
+3. Activar módulos
+4. Configurar personalidad IA
+5. (Opcional) Conectar WhatsApp/Meta
+6. Subir CSV de inventario → productos guardados realmente en `products`
+7. Empresa operativa en <15 minutos ✅

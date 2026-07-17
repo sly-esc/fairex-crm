@@ -1,0 +1,20 @@
+# Tareas de Implementación - Fase 1
+
+- `[/]` **1. Preparación de Base de Datos (Supabase)**
+  - `[x]` Verificar y actualizar esquemas de `companies`, `profiles` y roles (Super Admin vs Client).
+  - `[x]` Crear o actualizar tabla de configuración de IA (`company_ai_settings`) y `company_settings`.
+  - `[x]` Consolidar `migration_phase_6_foundation.sql` con estas estructuras y aplicar la migración.
+- `[ ]` **2. Configuración de Rutas (Next.js)**
+  - `[ ]` Crear `(superadmin)` route group para el Panel exclusivo de FAIREX.
+  - `[ ]` Configurar middleware o layout para restringir acceso solo al rol de Super Admin.
+- `[ ]` **3. Panel Super Admin: Gestión de Empresas**
+  - `[ ]` Listado de empresas (Tenants).
+  - `[ ]` Formulario de creación de empresa (nombre, zona horaria, etc).
+- `[ ]` **4. Panel Super Admin: Gestión de Usuarios**
+  - `[ ]` Formulario para crear un usuario administrador y asignarlo a un `company_id`.
+- `[ ]` **5. Panel Super Admin: Configuración SaaS**
+  - `[ ]` UI para activar/desactivar `company_modules`.
+  - `[ ]` UI para configurar IA (Identity, Rules, Style, Constraints).
+  - `[ ]` UI para configuración de Integraciones (Meta, Shopify, etc.).
+- `[ ]` **6. Dashboard del Cliente**
+  - `[ ]` Revisar middleware/estado para asegurar que el cliente actual esté estrictamente delimitado a su `company_id`.

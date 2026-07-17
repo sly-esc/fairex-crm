@@ -1,0 +1,75 @@
+# Auditoría de Impacto y Plan de Implementación Incremental (FASE 6)
+
+El objetivo de este plan es asegurar que la evolución hacia una arquitectura SaaS Multiempresa se realice de manera 100% incremental, sin romper el flujo actual de n8n, sin usar un segundo workflow, y manteniendo Supabase como la única fuente de verdad a largo plazo.
+
+## User Review Required
+
+> [!IMPORTANT]
+> Se requiere aprobación de este plan para comenzar la Fase 1 de implementación, centrada en el Onboarding SaaS y Supabase.
+
+## Fase 1: Flujo de Onboarding SaaS (Dashboard y Base de Datos)
+**Objetivo:** Preparar la infraestructura de datos para soportar múltiples empresas (Tenants) antes de tocar el bot.
+
+### Impacto y Reversibilidad
+- **Impacto:** Nulo sobre el sistema en producción actual. Toda la construcción se realizará en la aplicación web Next.js y en esquemas/tablas nuevas o extendidas de Supabase.
+- **Reversibilidad:** 100% reversible. Al no conectar el bot todavía a estas estructuras, cualquier error en el diseño de las pantallas de onboarding o las migraciones SQL puede corregirse sin afectar a los usuarios del bot.
+
+### Propuesta de Tareas (Fase 1)
+1. **Panel Super Admin (Uso exclusivo de FAIREX):** 
+   - Interfaz y rutas separadas (`/admin` o `/superadmin`) protegidas por RBAC (Rol Super Admin).
+   - Gestión de Empresas: Interfaz para crear/listar empresas (`company_id`).
+   - Gestión de Usuarios: Interfaz para crear/asignar administradores a las empresas creados.
+   - Activación de módulos, configuración de IA (identidad, reglas, etc.), configuración de integraciones y futura gestión global.
+2. **Dashboard del Cliente:**
+   - Mantener el dashboard actual intacto (Leads, Conversaciones, KPIs, Cotizaciones).
+   - Restricción estricta de visibilidad: El cliente administra únicamente los datos de su propia empresa.
+
+---
+
+## Fase 2: Importador de Inventario CSV a Supabase
+**Objetivo:** Permitir que las nuevas empresas (y FAIREX) suban su catálogo de productos y quede operativo rápidamente.
+
+### Impacto y Reversibilidad
+- **Impacto:** Afecta únicamente a la carga de datos (tabla `products` o similar) y la creación de una utilidad en el Dashboard (Next.js). No modifica el bot.
+- **Reversibilidad:** 100% reversible. Los datos insertados pueden borrarse si el formato es erróneo.
+
+### Propuesta de Tareas (Fase 2)
+1. Desarrollar un componente de arrastrar y soltar (Drag & Drop) en Next.js para CSVs.
+2. Validar columnas requeridas (SKU, nombre, precio, descripción).
+3. Insertar/Actualizar registros en Supabase vinculados al `company_id`.
+
+---
+
+## Fase 3: Adaptación Incremental del Workflow n8n
+**Objetivo:** Migrar el workflow actual para utilizar el objeto Runtime y Supabase de manera universal, eliminando Google Sheets, *nodo por nodo*.
+
+### Estrategia de Impacto Cero (Rollout Incremental)
+Para garantizar que el flujo de FAIREX no se rompa, se empleará el patrón **Strangler Fig** dentro del mismo workflow.
+
+1. **Paso 3.1: Inyección Pasiva del Runtime**
+   - Se crea el bloque "Normalización y Contexto" inmediatamente después del Webhook.
+   - Si no se detecta `company_id` (porque FAIREX aún envía el payload viejo o no está configurado), se inyecta un objeto Runtime "Hardcoded" emulando el contexto de FAIREX.
+   - **Impacto:** Seguro. Los nodos siguientes no se enteran del cambio.
+
+2. **Paso 3.2: Reemplazo Progresivo de Lecturas/Filtros**
+   - Se cambian los nodos de exclusión y validación para leer `{{ $json.runtime.context.settings.exclusion_filters }}`.
+   - **Impacto:** Bajo. Validable instantáneamente.
+
+3. **Paso 3.3: Sustitución de Agentes IA (Langchain)**
+   - Se reemplaza el texto fijo del Agente por las variables de `runtime.ai`.
+   - **Impacto:** Moderado. Se puede duplicar el nodo de IA, colocar un Switch, y rutear el 10% del tráfico al nuevo nodo dinámico (Canary Release). Una vez validado, se elimina el nodo viejo.
+
+4. **Paso 3.4: Reemplazo de Google Sheets por Supabase (CRUD)**
+   - En lugar de borrar el nodo de Google Sheets, se coloca un nodo de Supabase *al lado*. Ambos escriben temporalmente (Shadowing).
+   - Se valida que Supabase guarda lo mismo que Sheets.
+   - Una vez comprobada la integridad de los datos, se apaga Google Sheets.
+   - **Impacto:** Mínimo riesgo de pérdida de datos. Reversibilidad inmediata volviendo a encender el nodo de Google Sheets.
+
+## Verification Plan
+### Automated Tests
+- Ejecutar migraciones SQL localmente y probar triggers de `company_settings`.
+- Tests unitarios de los componentes de Next.js para el importador de CSV.
+
+### Manual Verification
+- **Fase 1 y 2:** Verificar en el Dashboard que la creación de empresa, usuario y subida de CSV puebla correctamente Supabase con el `company_id` adecuado.
+- **Fase 3:** Realizar pruebas end-to-end en el webhook de n8n inyectando payloads de prueba y confirmando que (1) FAIREX sigue operando y (2) una nueva empresa procesa los mensajes con su propia IA.

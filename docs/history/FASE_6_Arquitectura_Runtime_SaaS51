@@ -1,0 +1,71 @@
+# FASE 6 – Arquitectura Runtime SaaS
+
+## 1. Desacoplamiento del Webhook y Resolución de Contexto
+El **Webhook** actuará exclusivamente como un receptor pasivo (dumb endpoint) de eventos HTTP. No contendrá ninguna lógica de negocio, ni reglas de enrutamiento, ni conocimiento sobre el `company_id`.
+
+Inmediatamente después del Webhook, se introducirá un **Bloque de Normalización y Contexto**. Su única responsabilidad será:
+1. Extraer los identificadores relevantes del payload entrante (ej. número de teléfono destino, token, origin URL).
+2. Consultar a Supabase (`company_integrations`) para determinar a qué `company_id` pertenece la petición.
+3. Si la resolución falla, el flujo se detiene inmediatamente mediante un nodo condicional y se registra el error (Error Logging). No habrá fallback a Google Sheets.
+
+## 2. El Objeto Runtime Global (`$json.context`)
+Para evitar consultas repetidas a Supabase y mantener la eficiencia, el Bloque de Normalización construirá un único objeto de contexto (Runtime Object) que se pasará a lo largo de todo el workflow. Todos los nodos posteriores leerán de este objeto en lugar de realizar consultas adicionales.
+
+La estructura recomendada del objeto en n8n será:
+```json
+{
+  "context": {
+    "company_id": "uuid",
+    "integration": {
+      "platform": "whatsapp",
+      "credentials_id": "uuid"
+    },
+    "settings": {
+      "name": "Nombre Empresa",
+      "timezone": "America/Lima",
+      "ai_prompt": "Eres el asistente de ventas...",
+      "exclusion_filters": ["+34", "+1"]
+    },
+    "catalog": [
+      // Lista de productos y precios (cargada posteriormente bajo demanda)
+    ]
+  }
+}
+```
+
+## 3. Estrategia de Carga de Información (Data Loading)
+
+### A. Información que se carga UNA SOLA VEZ al iniciar (Eager Loading)
+Inmediatamente después de resolver el `company_id`, se ejecutará una consulta agrupada para traer:
+- **`company_settings`**: Perfil, configuración de zona horaria (crítica para los nodos de espera/Wait y Timestamp) y los prompts base de la IA.
+- **`company_integrations`**: Tokens, webhook URLs y configuración de canales.
+Esta información se inyecta en el objeto Runtime y **permanecerá en memoria durante toda la ejecución** de la instancia del workflow.
+
+### B. Información que permanece en memoria (State)
+- El objeto `context` construido en el paso anterior.
+- Los datos normalizados del cliente (teléfono, nombre, etc).
+- El estado temporal generado por los nodos lógicos (flags como `es_cliente`, `es_nuevo`, `detecta_cotizacion`).
+
+### C. Consultas que se hacen ÚNICAMENTE cuando son necesarias (Lazy Loading)
+Para no saturar Supabase ni alentar el flujo, la siguiente información se consultará de forma diferida, solo en las ramas del workflow que efectivamente la requieran:
+- **Catálogo de Productos (`products`)**: Solo se consultará si el nodo de enrutamiento determina que la intención del usuario requiere cotizar o si el Agente de IA lo solicita.
+- **Historial de Conversación (Chat Memory)**: El historial completo solo se obtendrá desde Postgres/Supabase justo antes de invocar a los nodos de IA de Langchain.
+- **Lead Memory**: Solo se consulta y actualiza en las subramas donde se necesita validar el progreso del embudo de ventas o extraer entidades nuevas.
+
+## 4. Evitar Consultas Repetidas a Supabase
+1. **Consolidación Inicial:** Un único nodo HTTP o de Supabase extraerá Settings e Integrations en un solo paso utilizando el `company_id`.
+2. **Propagación:** Mediante un nodo `Set` de n8n, el objeto `context` se fija en la raíz del payload (`$json`). Todos los nodos subsecuentes accederán a estas variables en memoria (ej. `{{ $json.context.settings.ai_prompt }}`).
+3. **Escritura en Lote (Batching):** Las actualizaciones al cliente o al Lead Memory se realizarán al final de sus respectivas ramas lógicas, agrupando los datos y evitando escrituras parciales o redundantes.
+
+## 5. Desacoplamiento Completo de FAIREX
+Para que el workflow funcione de manera completamente genérica (SaaS):
+- **Prompts Dinámicos:** Los nodos de IA reemplazarán cualquier mención estática de FAIREX por la variable del runtime: `{{ $json.context.settings.ai_prompt }}`.
+- **Mensajes Genéricos:** Las firmas de los mensajes (ej. "Atte. Ventas FAIREX") de los nodos de texto serán formadas utilizando `{{ $json.context.settings.name }}`.
+- **Filtros de Exclusión Dinámicos:** En lugar de ignorar hardcodeos (como "+34"), el nodo "FILTRO EXCLUSIÓN" cruzará el prefijo telefónico contra el array `{{ $json.context.settings.exclusion_filters }}`.
+- **Única Fuente de Verdad:** Supabase será el único backend. Durante la migración, los nodos de Google Sheets serán eliminados y sustituidos por nodos de Supabase forzando siempre la inserción/actualización con el `company_id`.
+
+## 6. Estrategia de Migración Incremental (Mismo Workflow)
+Se trabajará sobre el único workflow de manera secuencial y segura:
+1. **Fase 1 (Contexto y Validación de Bloqueo):** Añadir el Bloque de Normalización y Contexto a continuación del Webhook. Forzar la verificación de que si falla la resolución de `company_id`, el flujo termina y registra error (Kill Switch). Validar.
+2. **Fase 2 (Inyección de Runtime):** Reemplazar los strings estáticos en los nodos lógicos (filtros) y nodos de IA (prompts) por las variables inyectadas en el Runtime Object. Validar con datos simulados.
+3. **Fase 3 (Sustitución de CRUD):** Reemplazar, uno por uno, los nodos de Google Sheets por operaciones de Supabase (CRUD), comprobando en la base de datos tras cada paso la aplicación exitosa del `company_id`.

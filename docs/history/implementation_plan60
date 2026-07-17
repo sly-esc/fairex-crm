@@ -1,0 +1,62 @@
+# Plan de Implementación: Importador CSV Real de Productos
+
+Este documento describe los archivos que se modificarán y la lógica que se aplicará para conectar el importador de CSV con la tabla `public.products` utilizando `upsert`.
+
+## Archivos a Modificar
+
+---
+
+### 1. `src/types/superadmin.ts`
+**Propósito:** Actualizar las interfaces de TypeScript para reflejar los datos reales del producto, asegurando que `company_id` sea tratado como `number`.
+
+**Cambios:**
+- Actualizar `ProductCSVRow` para mapear de manera predecible las columnas extraídas del CSV (sku, name, description, price, cost_price, stock, min_stock, unit, category, image_url).
+- Crear una interfaz `ProductInsert` que represente el objeto exacto a enviar a Supabase, forzando `company_id: number`.
+
+---
+
+### 2. `src/app/api/superadmin/import-csv/route.ts`
+**Propósito:** Implementar la lógica real de parseo, normalización de headers bilingües y el `upsert` a Supabase.
+
+**Cambios:**
+- **Seguridad:** Mantener la validación estricta de Super Admin (`profile.is_super_admin === true`).
+- **Mapeo de Headers:** 
+  - Aceptar dinámicamente inglés o español: 
+    - `nombre` o `name`
+    - `descripcion` o `description`
+    - `precio` o `price`
+    - `costo`, `precio_costo` o `cost_price`
+    - `stock_minimo` o `min_stock`
+    - `unidad` o `unit`
+    - `categoria` o `category`
+    - `imagen_url` o `image_url`
+- **Limpieza de Datos:** 
+  - Parsear valores numéricos y proveer defaults (`stock = 0`, `min_stock = 0`).
+  - Pre-validar que no hayan valores negativos para evitar fallas a nivel de BD, agregándolos al array de `errors` de la respuesta si los hay.
+  - Convertir el `company_id` que viene del FormData a `number`.
+- **Base de Datos (Upsert):**
+  - Eliminar el comportamiento "mock" actual.
+  - Ejecutar: `.from('products').upsert(validRowsToInsert, { onConflict: 'company_id,sku' })`
+- **Evitar Delete Masivo:** El CSV solo inserta o actualiza productos. Los productos que existan en BD pero no en el CSV se dejarán intactos.
+
+---
+
+### 3. `src/app/(superadmin)/onboarding/OnboardingWizard.tsx` (Revisión Menor)
+**Propósito:** Asegurar que el frontend envíe correctamente los datos y consuma la estructura de errores si se agregan más validaciones.
+
+**Cambios:**
+- Validar que el FormData envíe el `company_id` como un string numérico válido y capturar errores detallados del importador (ej. fila 5: precio negativo) para renderizarlos en la UI.
+
+---
+
+## User Review Required
+> [!IMPORTANT]
+> **Pregunta de Diseño:** 
+> Actualmente, en caso de fallar algunas filas (por ejemplo, por precio negativo), el importador tiene dos caminos posibles:
+> 1. **Abortar todo:** Si hay un solo error en el CSV, rechazar todo el archivo.
+> 2. **Parcial:** Insertar las filas válidas y devolver una lista de los SKUs que fallaron para que el usuario los corrija.
+> 
+> He planeado el **Camino 2 (Parcial)** ya que suele ser mejor experiencia. ¿Estás de acuerdo con este enfoque?
+
+## Siguientes Pasos
+Una vez apruebes este plan o me indiques ajustes sobre el manejo de errores, procederé a modificar estos archivos y te entregaré la funcionalidad completa.

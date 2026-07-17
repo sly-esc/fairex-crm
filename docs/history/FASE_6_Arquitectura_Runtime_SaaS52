@@ -1,0 +1,116 @@
+# FASE 6 – Arquitectura Runtime SaaS
+
+## 1. Desacoplamiento del Webhook y Resolución de Contexto
+El **Webhook** actuará exclusivamente como un receptor pasivo (dumb endpoint) de eventos HTTP. No contendrá ninguna lógica de negocio, ni reglas de enrutamiento, ni conocimiento sobre el `company_id`.
+
+Inmediatamente después del Webhook, se introducirá un **Bloque de Normalización y Contexto**. Su única responsabilidad será:
+1. Extraer los identificadores relevantes del payload entrante (ej. número de teléfono destino, token, origin URL).
+2. Consultar a Supabase (`company_integrations`) para determinar a qué `company_id` pertenece la petición.
+3. Si la resolución falla, el flujo se detiene inmediatamente mediante un nodo condicional y se registra el error (Error Logging). No habrá fallback a Google Sheets.
+
+## 2. El Objeto Runtime Global (`$json.runtime`)
+Para preparar el ecosistema para el escalamiento SaaS y evitar consultas repetidas, el Bloque de Normalización construirá un único objeto de ejecución (Runtime Object) dividido en cuatro dominios principales que se pasará a lo largo de todo el workflow.
+
+La estructura recomendada del objeto en n8n será:
+```json
+{
+  "runtime": {
+    "context": {
+      "company_id": "uuid",
+      "name": "Nombre Empresa",
+      "timezone": "America/Lima",
+      "modules": {
+        "commerce": true,
+        "support": false,
+        "billing": true
+      },
+      "integrations": {
+        "whatsapp": { "provider": "meta", "credentials_id": "uuid", "active": true },
+        "ecommerce": { "provider": "shopify", "store_url": "...", "active": true },
+        "crm": { "provider": "rack", "active": false }
+      }
+    },
+    "session": {
+      "channel": "whatsapp",
+      "session_id": "uuid",
+      "entry_point": "webhook",
+      "timestamp": "2026-07-14T10:00:00Z"
+    },
+    "customer": {
+      "phone": "+51999999999",
+      "name": "Juan Perez",
+      "is_new": false,
+      "tags": ["vip", "interested"]
+    },
+    "ai": {
+      "identity": "Eres el asistente estrella de la empresa...",
+      "business_rules": "No dar descuentos mayores al 10%. Las cotizaciones duran 7 días.",
+      "commercial_style": "Tono empático, directo y profesional. Uso de emojis moderado.",
+      "constraints": "Nunca prometer fechas de entrega exactas. No hablar de la competencia.",
+      "knowledge_sources": ["url_documento_1", "faq_id_123"]
+    }
+  }
+}
+```
+
+### Dominios del Runtime
+- **`context`**: Define el entorno operativo inmutable durante la ejecución. Incluye la configuración global de la empresa (`company_settings`), los módulos activos (`company_modules` para habilitar/deshabilitar flujos sin modificar el workflow) y un diccionario de múltiples integraciones simultáneas, permitiendo omnicanalidad genuina.
+- **`session`**: Define el estado efímero del evento actual (canal de entrada, ID de sesión, momento exacto).
+- **`customer`**: Define los datos normalizados de quien interactúa (teléfono, identificadores, nombre, estado).
+- **`ai`**: Define la parametrización completa y segregada del agente cognitivo. Separar la identidad, las reglas, el estilo, las restricciones y el conocimiento permite componer prompts dinámicos mucho más precisos y fáciles de administrar en la base de datos de la empresa SaaS.
+
+## 3. Estrategia de Carga de Información (Data Loading)
+
+### A. Información que se carga UNA SOLA VEZ al iniciar (Eager Loading)
+Inmediatamente después de resolver el `company_id`, se ejecutará una consulta agrupada (idealmente un Stored Procedure o View en Supabase) para traer:
+- **`company_settings` y `company_modules`** (para poblar el bloque `context`).
+- **`company_integrations`** (para mapear TODAS las integraciones activas en el diccionario de integraciones).
+- **Configuración de IA** (para poblar los 5 subcampos del bloque `ai`).
+Esta información se inyecta en el objeto Runtime y **permanece en memoria durante toda la ejecución** de la instancia del workflow.
+
+### B. Información que permanece en memoria (State)
+- El objeto `runtime` completo definido en el Eager Loading.
+- El estado temporal modificado por los nodos lógicos a medida que avanza el flujo (ej. banderas de avance del embudo o actualizaciones en los datos de contacto en `customer`).
+
+### C. Consultas que se hacen ÚNICAMENTE cuando son necesarias (Lazy Loading)
+- **Catálogo de Productos (`products`)**: Solo si el flujo requiere cotizar o recomendar productos, utilizando el módulo de ecommerce o catálogo activo (ej. usando la integración de Shopify o nativa).
+- **Historial de Conversación (Chat Memory)**: Obtenido de Supabase/Postgres justo antes de invocar a los nodos de IA de Langchain, para no acarrear un payload masivo desde el inicio.
+- **Lead Memory**: Consultado y actualizado únicamente en las ramas específicas donde se consolida el progreso de ventas o se extraen nuevas entidades.
+
+## 4. Evitar Consultas Repetidas a Supabase
+1. **Consolidación Inicial:** Un único request (RPC o vista de base de datos) extrae y formatea el objeto Runtime base completo desde múltiples tablas al inicio del proceso.
+2. **Propagación Root:** En n8n, el objeto se ancla en `{{ $json.runtime }}`. Todos los nodos leen de este estado consolidado (ej. un nodo IF comprueba `{{ $json.runtime.context.modules.commerce }}`).
+3. **Escritura en Lote (Batching):** Las actualizaciones a Supabase (como crear un nuevo cliente en el CRM o guardar un log) se postergan a los nodos terminales de las ramas de ejecución, ejecutándose una sola vez.
+
+## 5. Desacoplamiento Completo de FAIREX
+Para eliminar permanentemente las ataduras al entorno original:
+- **Prompts Ensamblados:** El prompt del sistema del Agente IA dejará de ser texto estático y se ensamblará dinámicamente:
+  `${runtime.ai.identity}\n\nReglas:\n${runtime.ai.business_rules}\n\nEstilo:\n${runtime.ai.commercial_style}\n\nRestricciones:\n${runtime.ai.constraints}`.
+- **Enrutamiento por Módulos:** En lugar de asumir siempre ciertas funcionalidades, el workflow usará Switches y condicionales basados en `runtime.context.modules` para decidir si un servicio está encendido para esa empresa.
+- **Independencia de Canal:** Al usar un bloque `session` genérico y múltiples `integrations` en el contexto, se asegura que la misma lógica central de ventas aplique tanto para un mensaje de Instagram como para uno de WhatsApp, adaptando sólo la credencial de salida.
+
+## 6. Arquitectura de Onboarding Runtime
+El ciclo de vida desde la creación de una nueva empresa (Tenant) en la plataforma SaaS hasta que su Runtime está 100% operativo en el workflow n8n abarca los siguientes pasos:
+
+1. **Creación de la Organización (SaaS Dashboard):**
+   - El administrador de la plataforma (o el cliente mediante self-service) registra una nueva empresa.
+   - Supabase genera un nuevo registro en la tabla `companies` con su propio `company_id`.
+   - Se disparan triggers automáticos en Supabase que insertan configuraciones por defecto seguras en `company_settings`, `company_modules` y en la tabla de configuración de IA.
+
+2. **Configuración de Módulos e IA (SaaS Dashboard):**
+   - El Tenant completa su perfil: nombre, moneda, zona horaria.
+   - Habilita los módulos contratados (ej. activa Ventas IA, desactiva Soporte Técnico).
+   - Configura el Agente Cognitivo rellenando los campos segregados: le da una identidad (ej. "Experto en Finanzas"), establece sus reglas de negocio, define su estilo conversacional e impone restricciones de seguridad. Sube sus FAQs y catálogo base.
+
+3. **Conexión de Canales (Integrations):**
+   - El Tenant vincula de forma segura sus plataformas (WhatsApp/Meta, Shopify, etc.).
+   - Se almacenan las credenciales encriptadas en `company_integrations` vinculadas a su `company_id`.
+
+4. **Activación de Endpoint:**
+   - La plataforma SaaS asigna a la empresa un webhook (por ejemplo, validando el número asignado en WhatsApp o generando una URL dinámica).
+   - Se instruye al proveedor externo para enrutar sus eventos hacia el Endpoint Universal de n8n.
+
+5. **Primera Ejecución (Runtime 100% Operativo):**
+   - Llega un mensaje real de un cliente al workflow central.
+   - El Webhook pasivo delega al Bloque de Normalización, el cual resuelve automáticamente el `company_id` y consolida en milisegundos todo el contexto configurado en el Dashboard en el objeto `runtime`.
+   - El flujo procesa la interacción operando al 100% como la empresa configurada, respetando su identidad, integraciones y módulos, todo ello corriendo sobre el mismo workflow unificado sin necesidad de duplicarlo ni modificar nodos.

@@ -1,0 +1,122 @@
+# FASE 6 – Auditoría del Workflow Principal n8n para Conversión a SaaS Multiempresa
+
+## 1. Mapa Completo del Workflow
+El workflow principal se divide en los siguientes bloques principales:
+1. **Recepción (Webhook):** Entrada principal de las solicitudes.
+2. **Enrutamiento (If/Switch):** Detección de tipos de eventos (registro, chat, exclusiones, clientes, interesados).
+3. **Persistencia (Google Sheets & Supabase):** 
+   - Registro y actualización de clientes y cotizaciones en Google Sheets.
+   - Manejo de memoria (Lead Memory y Chat Memory) usando Supabase.
+4. **Inteligencia (Langchain Agents):** Agentes de IA que procesan la intención, responden y extraen entidades, usando OpenAI Chat Models.
+5. **Generación de Documentos (HTTP Request):** Generación de PDFs para cotizaciones.
+6. **Manejo de Tiempos (Wait & HTTP Request):** Envío de mensajes y tiempos de espera.
+
+## 2. Inventario de Nodos
+Total de Nodos Analizados: **48**
+
+**Nodos de Control y Lógica:**
+- Webhook
+- DETECCION DE REGISTRO, DETECCION DE CHAT, FILTRO EXCLUSIÓN, ES CLIENTE, ES INTERESADO, DETECCIÓN COTIZACIÓN, ES NUEVO, VALIDAR ULTIMO MENSAJE, EXISTE MEMORIA, EXISTE MEMORIA1
+
+**Nodos de Modificación de Datos:**
+- NORMALIZAR DATOS, LIMPIAR MENSAJE 1, LIMPIAR MENSAJE 2, DATOS COTIZACIÓN, GUARDAR TIMESTAMP, ORDENAR TIMESTAMP, ULTIMO TIMESTAMP, ESPERAR MENSAJES
+
+**Nodos de Bases de Datos y Almacenamiento:**
+- CREAR CLIENTE (Append Row) (Google Sheets)
+- CRM FAIREX (Google Sheets)
+- ACTUALIZAR CLIENTE 1 (Update Row) (Google Sheets)
+- ACTUALIZAR CLIENTE 2 NORMAL (Google Sheets)
+- ACTUALIZAR CLIENTE 2 COTIZACION (Google Sheets)
+- OBTENER ULTIMO TIMESTAMP (Google Sheets)
+- VERIFICAR LEAD MEMORY (Supabase)
+- ACTUALIZAR MEMORIA (Supabase)
+- CREAR MEMORIA (Supabase)
+- VERIFICAR LEAD MEMORY1 (Supabase)
+- ACTUALIZAR MEMORIA1 (Supabase)
+- CREAR MEMORIA1 (Supabase)
+- Postgres Chat Memory
+
+**Nodos de IA (Langchain):**
+- AGENTE IA VENTAS FAIREX, MEMORIA INTELIGENTE, MEMORIA INTELIGENTE1
+- OpenAI Chat Model, OpenAI Chat Model1, OpenAI Chat Model2
+- Structured Output Parser, Structured Output Parser1
+
+**Nodos HTTP:**
+- TEXTO, TEXTO 2, GENERAR PDF COTIZACIÓN
+
+## 3. Dependencias Actuales
+**Nodos dependientes de Google Sheets (a migrar a Supabase):**
+- CREAR CLIENTE (Append Row)
+- CRM FAIREX
+- ACTUALIZAR CLIENTE 1 (Update Row)
+- ACTUALIZAR CLIENTE 2 NORMAL
+- ACTUALIZAR CLIENTE 2 COTIZACION
+- OBTENER ULTIMO TIMESTAMP
+
+**Nodos que ya utilizan Supabase/Postgres:**
+- VERIFICAR LEAD MEMORY, ACTUALIZAR MEMORIA, CREAR MEMORIA
+- VERIFICAR LEAD MEMORY1, ACTUALIZAR MEMORIA1, CREAR MEMORIA1
+- Postgres Chat Memory
+
+## 4. Puntos de Acoplamiento con FAIREX
+Los siguientes nodos contienen información "hardcoded" (fija) que acopla el workflow a la empresa FAIREX:
+- **Webhook:** Rutas específicas.
+- **FILTRO EXCLUSIÓN:** Números y parámetros específicos de exclusión (+34, etc.).
+- **NORMALIZAR DATOS:** Lógica atada al modelo de datos de FAIREX.
+- **AGENTE IA VENTAS FAIREX:** Prompts del sistema que contienen el nombre de la empresa, su tono, productos y base de conocimiento incrustada.
+- **TEXTO / TEXTO 2:** Plantillas de mensajes con firma/nombre de FAIREX.
+- **DATOS COTIZACIÓN:** Precios o reglas de cotización específicas.
+- **GUARDAR TIMESTAMP / OBTENER ULTIMO TIMESTAMP:** Uso de IDs de planillas específicas (SpreadsheetID).
+- **Todos los nodos de Google Sheets / Supabase:** Referencian las bases de datos u hojas de FAIREX directamente.
+
+## 5. Estrategia de Resolución SaaS Multiempresa
+Para conservar un único workflow para todas las empresas, la resolución de variables dinámicas es clave.
+
+### ¿Dónde resolver el `company_id`?
+**Nodo: Webhook**
+El Webhook debe ser la puerta de entrada universal. El payload entrante (ya sea por query parameter, header, o path dinámico, o resolviendo el número destino de WhatsApp/origen) debe determinar e inyectar el `company_id` en el flujo.
+
+### Información Dinámica por Tablas
+**¿Qué obtener desde `company_settings`?**
+- Nombre de la empresa, tono de voz (prompt), y configuración de zona horaria (para los timestamp y esperas).
+- Filtros de exclusión (qué números ignorar).
+- Mensajes y plantillas (TEXTO 1 y TEXTO 2).
+
+**¿Qué obtener desde `company_integrations`?**
+- Credenciales de la API de WhatsApp, u otros proveedores (reemplazando credenciales estáticas en HTTP Requests).
+- URLs de webhooks o tokens necesarios para el envío de documentos/PDFs.
+
+**¿Qué obtener desde `products`?**
+- Catálogo de productos y lista de precios (necesario para el AGENTE IA VENTAS y DATOS COTIZACIÓN).
+
+## 6. Propuesta de Migración por Bloques
+
+### Bloques que pueden permanecer exactamente iguales
+- Nodos lógicos condicionales: (DETECCION DE REGISTRO, DETECCION DE CHAT, ES CLIENTE, ES INTERESADO, DETECCIÓN COTIZACIÓN, ES NUEVO).
+- Lógica de Langchain estructurada (Structured Output Parser, MEMORIA INTELIGENTE, MEMORIA INTELIGENTE1).
+- Flujo de tiempos (ESPERAR MENSAJES, ORDENAR TIMESTAMP, ULTIMO TIMESTAMP).
+
+### Bloques que deberán cambiar (Soporte SaaS)
+- **Webhook:** Debe capturar o resolver el `company_id`.
+- **Google Sheets -> Supabase:** Todos los nodos de Google Sheets deben ser reemplazados por peticiones a Supabase (Postgres), insertando o actualizando filtrando con RLS basado en el `company_id` del payload.
+- **Agentes IA (Prompts):** Los nodos de OpenAI Chat Model y el Agente de Ventas deben usar una variable de contexto (`{{ $json.company_settings.prompt }}`) en lugar del prompt fijo.
+- **Supabase Existente (Memoria):** Los nodos de Memoria en Supabase y Postgres Chat Memory deben incluir `company_id` en las consultas (WHERE company_id = X) para evitar filtrado de datos cruzados entre empresas.
+- **HTTP Requests (Mensajería/PDFs):** Parametrización de los tokens de autorización (Bearer) y las plantillas.
+
+## 7. Orden Recomendado de Implementación
+1. **Adecuación del Payload (Webhook):** Inyectar el `company_id` desde el evento disparador y consultar los datos de la empresa (`company_settings`, `company_integrations`) para adjuntarlos al flujo (en un nodo `Set` global).
+2. **Migración de Almacenamiento (Reemplazo de Sheets):** Cambiar los nodos de Google Sheets a Supabase para CRUD de clientes/cotizaciones, usando las políticas RLS.
+3. **Aislamiento de la Memoria (Multi-tenant):** Ajustar las consultas en los nodos de Memoria en Supabase para que requieran el `company_id`.
+4. **Parametrización de la IA:** Extraer el prompt de la base de datos e inyectarlo en el Agente de Ventas.
+5. **Parametrización de los HTTP Requests:** Usar credenciales dinámicas en lugar de credenciales estáticas de FAIREX.
+
+## 8. Riesgos y Estrategia de Rollback
+
+**Riesgos por Bloque:**
+- **Sustitución de Sheets a Supabase:** Riesgo Alto. Posible pérdida de datos de clientes si los tipos de datos no mapean correctamente.
+- **Parametrización de IA:** Riesgo Medio. Al volver dinámico el prompt, la IA podría perder precisión si el prompt inyectado está mal formateado.
+- **Resolución del Webhook:** Riesgo Crítico. Si el `company_id` falla, el sistema entero colapsa o guarda información en una empresa incorrecta.
+
+**Estrategia de Rollback:**
+- **Mantenimiento Dual:** Durante la transición, implementar un nodo condicional después del Webhook. Si `company_id` no existe (o si es una flag de prueba), desviar al flujo antiguo que todavía escribe en Sheets.
+- **Versionado del Workflow:** Duplicar el workflow completo. Mantener "FAIREX - BOT PRINCIPAL" intacto, y crear "SAAS - BOT PRINCIPAL". Modificar únicamente el nuevo para evitar tocar producción hasta estar seguros de la estabilidad.

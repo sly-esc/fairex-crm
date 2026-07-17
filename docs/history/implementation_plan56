@@ -1,0 +1,171 @@
+# FAIREX Business OS — Fase 1: Panel Super Admin + Onboarding SaaS
+
+## Contexto y Objetivo
+
+Construir el **Panel Super Admin** exclusivo de FAIREX que permita crear y configurar una empresa nueva de principio a fin en menos de 15 minutos. Los clientes nunca verán este panel; es solo para el equipo FAIREX interno.
+
+La arquitectura existente **no se toca**: RLS, middleware, layouts del dashboard, n8n workflow y tablas existentes permanecen intactos.
+
+---
+
+## Estado actual auditado
+
+| Elemento | Estado |
+|---|---|
+| `(superadmin)/layout.tsx` | ✅ Existe — guard con `is_super_admin` en `profiles` |
+| `company_modules` | ✅ Tabla creada (migration_phase_6) |
+| `company_integrations` | ✅ Tabla creada (migration_phase_6) |
+| `company_settings` | ✅ Existe con columnas IA (ai_identity, ai_business_rules, etc.) |
+| `profiles.is_super_admin` | ✅ Columna existe |
+| `companies` | ✅ Tabla base existe con: name, industry, plan, is_active |
+| Rutas superadmin | ⚠️ Solo existe `layout.tsx` — sin páginas aún |
+| Server Actions | ⚠️ Directorio `/src/actions` vacío |
+| API Routes | ⚠️ Directorio `/src/app/api` vacío |
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Slug de empresa**: ¿Necesita la tabla `companies` una columna `slug` (ej. `acme-corp`) para enrutar subdominios o paths futuros? Si sí, la agregaríamos en la migración de esta fase. Si no, lo omitimos.
+
+> [!IMPORTANT]
+> **Importador CSV - columnas de productos**: El importador necesita un mapeo de columnas CSV → tabla `productos`. ¿Cuál es la estructura actual de la tabla `productos` / `clientes` que ya existe en Supabase? Confirmar columnas principales para el mapper del CSV (sku, nombre, precio, stock, etc.).
+
+> [!WARNING]
+> **WhatsApp Phone ID en `company_integrations`**: El proveedor es `'meta'` pero necesitamos saber si el `provider_account_id` guardará el **WhatsApp Business Phone Number ID** o el **Facebook Page ID**, ya que son cuentas distintas de Meta. ¿Guardar las dos en registros separados?
+
+> [!NOTE]
+> **Módulos disponibles (`module_key`)**: Para poblar el step de "Activar módulos" en el onboarding, usaré estos keys fijos: `crm`, `inventario`, `whatsapp_bot`, `pipeline`, `cotizaciones`, `reportes`. ¿Quieres agregar o quitar alguno?
+
+---
+
+## Propuesta de Cambios
+
+### Component 1 — Base de Datos (Migración Incremental)
+
+#### [NEW] `supabase/migrations/migration_phase_7_superadmin_onboarding.sql`
+
+- Agregar columna `whatsapp_phone` y `logo_url` a `companies` (opcionales, no NOT NULL)
+- Agregar columna `onboarding_completed_at` y `onboarding_step` a `companies`
+- Crear tabla `products` si no existe (para el importador CSV)
+- **No altera nada existente** — todo con `ADD COLUMN IF NOT EXISTS`
+
+---
+
+### Component 2 — Server Actions (`/src/actions/`)
+
+Toda la lógica de escritura pasa por Server Actions con el cliente `service_role` — nunca llega al frontend.
+
+#### [NEW] `src/actions/superadmin/companies.ts`
+- `createCompany(data)` — crea empresa + `company_settings` default
+- `listAllCompanies()` — lista paginada para el panel
+- `updateCompanyStatus(id, is_active)` — activar/suspender empresa
+- `getCompanyDetail(id)` — empresa + settings + modules + integrations
+
+#### [NEW] `src/actions/superadmin/modules.ts`
+- `activateModule(company_id, module_key)` 
+- `deactivateModule(company_id, module_key)`
+- `getCompanyModules(company_id)`
+
+#### [NEW] `src/actions/superadmin/ai-config.ts`
+- `saveAiConfig(company_id, config)` — escribe en `company_settings` (ai_identity, ai_business_rules, etc.)
+- `getAiConfig(company_id)`
+
+#### [NEW] `src/actions/superadmin/integrations.ts`
+- `saveIntegration(company_id, provider, credentials, config)` — escribe en `company_integrations`
+- `listIntegrations(company_id)`
+
+#### [NEW] `src/actions/superadmin/csv-import.ts`
+- `importProductsCSV(company_id, rows[])` — bulk upsert en tabla `products`
+- `validateCSVRow(row)` — validación server-side
+
+---
+
+### Component 3 — Panel Super Admin UI (`/src/app/(superadmin)/`)
+
+#### [MODIFY] `src/app/(superadmin)/layout.tsx`
+- Agregar sidebar de navegación izquierda con: Empresas, Crear Empresa, Configuración global
+- Mantener el guard `is_super_admin` intacto
+- Aplicar diseño dark premium (consistente con el dashboard del cliente)
+
+#### [NEW] `src/app/(superadmin)/page.tsx` — Dashboard resumen
+- Métricas: Total empresas, empresas activas, onboardings completados
+- Lista de empresas recientes con status badge
+
+#### [NEW] `src/app/(superadmin)/companies/page.tsx` — Lista de empresas
+- Tabla con búsqueda, filtros por plan/status
+- Acciones: Ver detalle, Suspender, Eliminar
+
+#### [NEW] `src/app/(superadmin)/companies/[id]/page.tsx` — Detalle de empresa
+- Tabs: Configuración General | Módulos | Config IA | Integraciones | Inventario CSV
+- Muestra el progreso del onboarding
+
+#### [NEW] `src/app/(superadmin)/onboarding/page.tsx` — Wizard Onboarding
+- Stepper de 6 pasos:
+  1. **Crear empresa** (nombre, industria, plan, teléfono WA)
+  2. **Crear administrador** (email, nombre → invitación por email vía Supabase)
+  3. **Activar módulos** (toggles por module_key)
+  4. **Configurar IA** (identity, business_rules, commercial_style, constraints)
+  5. **Configurar integraciones** (Meta/WhatsApp, Rack, etc.)
+  6. **Importar CSV** (drag & drop, preview, confirmación)
+
+---
+
+### Component 4 — API Route para CSV (streaming/parse)
+
+#### [NEW] `src/app/api/superadmin/import-csv/route.ts`
+- `POST` — recibe `multipart/form-data` con el CSV y `company_id`
+- Parsea el CSV server-side (sin lib extra, usando `ReadableStream`)
+- Valida columnas requeridas
+- Llama a `importProductsCSV()` action
+- Retorna `{ imported: N, errors: [] }`
+
+---
+
+### Component 5 — Tipos TypeScript
+
+#### [NEW] `src/types/superadmin.ts`
+- `Company`, `CompanyModule`, `CompanyIntegration`, `AiConfig`, `OnboardingStep`
+- `ProductCSVRow`, `ImportResult`
+
+---
+
+## Flujo de Datos (Arquitectura)
+
+```
+Browser (Wizard UI)
+    ↓ Server Action call (HTTPS, Next.js BFF)
+        ↓ supabase.createClient() con service_role
+            ↓ INSERT/UPDATE en Supabase (RLS bypassed, controlado por Server Action)
+                ↓ Supabase retorna resultado
+    ↓ Revalidate + redirect
+Browser actualizado
+```
+
+**Secrets**: Las credenciales de integraciones se guardan únicamente en `company_integrations.credentials` (JSONB). El campo nunca sale del Server Action hacia el cliente.
+
+---
+
+## Verificación
+
+### Verificación Automática
+- `npm run build` — confirmar zero TypeScript errors
+- `npm run lint` — cero warnings en archivos nuevos
+
+### Verificación Manual
+1. Navegar a `/superadmin` con cuenta `is_super_admin = true` → ver dashboard
+2. Navegar a `/superadmin` con cuenta normal → redirect a `/dashboard` ✅ (guard existente)
+3. Ejecutar el wizard completo en staging → empresa creada y operativa
+4. Importar CSV de 100 productos → verificar en Supabase
+5. Verificar que el dashboard del cliente (`/dashboard`) no fue alterado
+
+---
+
+## Archivos que NO se tocan
+
+- `/src/app/(dashboard)/**` — intacto
+- `/src/app/(auth)/**` — intacto  
+- `/src/middleware.ts` — intacto
+- Todas las migraciones anteriores — solo se agrega una nueva
+- El workflow de n8n — se adapta en Fase 3

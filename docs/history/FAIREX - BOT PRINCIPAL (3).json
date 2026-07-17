@@ -1,0 +1,2706 @@
+{
+  "name": "FAIREX - BOT PRINCIPAL",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fairex-bot",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -272,
+        16
+      ],
+      "id": "38ab7956-3697-447a-a345-06011d4f2f3f",
+      "name": "Webhook",
+      "webhookId": "630c19ae-149c-4dd2-9d23-06b99588c96f"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f727c8d4-3561-4cc0-857a-d0c426427738",
+              "leftValue": "={{ Object.keys($json).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        656,
+        0
+      ],
+      "id": "041f3e25-b996-4152-8ffe-484eead2b2b6",
+      "name": "DETECCION DE REGISTRO"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2ff935ef-81f3-4274-9da7-5a3236a1aadc",
+              "leftValue": "={{ $json.body.whatsappInboundMessage.from }}",
+              "rightValue": "@g.us",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -48,
+        16
+      ],
+      "id": "ccec44f9-3195-4f77-97d7-cac8d2bd2225",
+      "name": "DETECCION DE CHAT"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f7fd57b9-ee2a-42a3-95bd-88f13a8c0ae4",
+              "leftValue": "={{ [\"EXCLUIR\",\"PERDIDO\"].includes(($node[\"CRM FAIREX\"].json.estado || \"\").toUpperCase()) }}",
+              "rightValue": "EXCLUIR",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1104,
+        0
+      ],
+      "id": "ae73cb8c-b99e-434f-bbbe-1eaaf2b2b30e",
+      "name": "FILTRO EXCLUSIÓN"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1d84fcae-d616-4c99-9fe7-c5dc93951bbe",
+              "leftValue": "={{$json[\"estado\"]}}",
+              "rightValue": "CLIENTE",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1488,
+        80
+      ],
+      "id": "e6f8b1d1-7e87-4b6f-a2da-58f8d7a6ce1e",
+      "name": "ES CLIENTE"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a256f738-49e9-4723-a7eb-4f8d785ddfea",
+              "leftValue": "={{$json[\"estado\"]}}",
+              "rightValue": "EXCLUIR",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "70cba817-3b9e-4d9c-9fe5-a2431dd7abad",
+              "leftValue": "={{ $json.estado }}",
+              "rightValue": "NO INTERESADO",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1712,
+        80
+      ],
+      "id": "f5a0a3e6-b715-4586-878b-46814461eec9",
+      "name": "ES INTERESADO"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        384,
+        224
+      ],
+      "id": "1f039321-e547-4854-87bf-6712c6a81b11",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        -192
+      ],
+      "id": "00af6a75-d68d-4d76-854a-6ce0784de9f2",
+      "name": "No Operation, do nothing2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1936,
+        336
+      ],
+      "id": "3a4d76dd-94a0-4b5d-ba8d-74fec5664913",
+      "name": "No Operation, do nothing3"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg",
+          "mode": "list",
+          "cachedResultName": "CRM - FAIREX",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "numero": "={{ $node[\"NORMALIZAR DATOS\"].json[\"numero\"] }}",
+            "nombre": "={{ $node[\"NORMALIZAR DATOS\"].json[\"nombre\"] }}",
+            "estado": "ACTIVO",
+            "interes": "=pendiente",
+            "fecha_ultimo_contacto": "={{ new Date().toLocaleString(\"es-MX\", { timeZone: \"America/Cancun\" }) }}",
+            "etapa_venta": "NUEVO",
+            "negocio": "FAIREX",
+            "ultimo_mensaje": "={{ $node[\"NORMALIZAR DATOS\"].json[\"mensaje\"] }}",
+            "resumen_conversacion": "Primer contacto",
+            "origen": "WhatsApp",
+            "intencion": "pendiente",
+            "score_lead": "1",
+            "timestamp": "={{ Date.now() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "numero",
+              "displayName": "numero",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nombre",
+              "displayName": "nombre",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "estado",
+              "displayName": "estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "interes",
+              "displayName": "interes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "negocio",
+              "displayName": "negocio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ultimo_mensaje",
+              "displayName": "ultimo_mensaje",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resumen_conversacion",
+              "displayName": "resumen_conversacion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_ultimo_contacto",
+              "displayName": "fecha_ultimo_contacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "origen",
+              "displayName": "origen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "etapa_venta",
+              "displayName": "etapa_venta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "intencion",
+              "displayName": "intencion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "score_lead",
+              "displayName": "score_lead",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        880,
+        -176
+      ],
+      "id": "c749f983-0b61-4b6d-8dca-ee4093406207",
+      "name": "CREAR CLIENTE (Append Row)",
+      "credentials": {
+        "googleApi": {
+          "id": "yOzVan6enYFuOf1c",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "61693e25-f37f-4c45-8af3-680d558f5df5",
+              "name": "numero",
+              "value": "={{ $json.body.whatsappInboundMessage.from.replace(/\\D/g, \"\") }}",
+              "type": "string"
+            },
+            {
+              "id": "c7aba951-f96d-4851-b9a6-6d7322881ec4",
+              "name": "nombre",
+              "value": "={{ $json.body.whatsappInboundMessage.customerProfile?.name || \"Sin nombre\" }}",
+              "type": "string"
+            },
+            {
+              "id": "b3bd00ea-3cf9-48ef-9477-e897913f9c91",
+              "name": "mensaje",
+              "value": "={{ $json.body.whatsappInboundMessage.text?.body || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "6ddbf7aa-2a48-47d1-b0ce-f02c095beefc",
+              "name": "negocio",
+              "value": "FAIREX",
+              "type": "string"
+            },
+            {
+              "id": "b9ec5014-9816-49d1-9407-d42127e165bb",
+              "name": "fecha",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "b564e26c-0f63-4fe9-ad5b-4490c55847d3",
+              "name": "=origen",
+              "value": "WhatsApp",
+              "type": "string"
+            },
+            {
+              "id": "df803ce9-3595-4186-8951-067edfac3feb",
+              "name": "estado",
+              "value": "ACTIVO",
+              "type": "string"
+            },
+            {
+              "id": "6ecf0954-2c7d-4c84-9db6-14fe1777069e",
+              "name": "etapa_venta",
+              "value": "NUEVO",
+              "type": "string"
+            },
+            {
+              "id": "6182e6f0-2e4b-41ef-b321-7196c43f081b",
+              "name": "resumen_conversacion",
+              "value": "Primer contacto",
+              "type": "string"
+            },
+            {
+              "id": "b561255d-deba-47f6-b51c-f0ce7f43893e",
+              "name": "score_lead",
+              "value": "1",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "f4f3c6f4-9f24-4942-8635-4993536161f8",
+      "name": "NORMALIZAR DATOS"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg",
+          "mode": "list",
+          "cachedResultName": "CRM - FAIREX",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "numero",
+              "lookupValue": "={{ $node[\"NORMALIZAR DATOS\"].json[\"numero\"] + \"\" }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        432,
+        0
+      ],
+      "id": "6960860c-4b07-4c44-b1a0-d69f5d7db857",
+      "name": "CRM FAIREX",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "yOzVan6enYFuOf1c",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('ULTIMO TIMESTAMP').item.json.ultimo_mensaje }}",
+        "options": {
+          "systemMessage": "ROL:\n\nEres un asesor experto en ventas por WhatsApp de la agencia FAIREX.\n\nNo eres un asistente informativo.  \nEres un vendedor estratégico cuyo objetivo es entender al cliente, detectar su problema y llevarlo a una decisión de compra.\n\nTu objetivo principal es:\n\n- Generar clientes potenciales calificados\n- Detectar oportunidades de negocio\n- Cerrar ventas o avanzar al pago e inicio del servicio\n\nSiempre debes dirigir la conversación hacia una acción concreta.\n\n---\n\nINFORMACIÓN DE LA EMPRESA:\n\nFAIREX es una agencia especializada en generar clientes reales para negocios mediante sistemas automatizados de ventas.\n\nNos enfocamos en:\n\n- Automatización con inteligencia artificial\n- Campañas publicitarias optimizadas\n- Sistemas que generan prospectos constantes\n\nNo solo hacemos marketing…  \nCreamos sistemas que convierten tráfico en clientes.\n\nOperamos desde Cancún y trabajamos con negocios en toda la Riviera Maya.\n\nNuestro enfoque está basado en resultados medibles, crecimiento real y optimización constante.\n\n---\n\nINFORMACION DE PAGO \n\nCuenta para transferencias: \n\nTitular - Sly German Escudero Luna\n\nNumero de tarjeta: 4152 3143 5136 6706\n\nBanco: BBVA\n---\n\nPROPUESTA DE VALOR:\n\nAyudamos a negocios que:\n\n- No tienen clientes constantes\n- Dependen de recomendaciones\n- No tienen un sistema de ventas estructurado\n\nA transformar su forma de vender mediante automatización y estrategias digitales enfocadas en resultados.\n\n---\n\nDETALLE INTERNO DE SERVICIOS (NO MOSTRAR COMPLETO SI NO LO PIDEN):\n\n1. Automatización de ventas con IA (CERRADOR WHATSAPP)\n- Implementación: $10,000 MXN\n- Incluye:\n  - Respuesta automática inteligente\n  - Calificación de prospectos\n  - Seguimiento automático\n  - Integración con CRM\n  - Generación de cotizaciones\n\n- Mantenimiento mensual: $3,000 MXN\n- Incluye ajustes, mejoras y optimización continua\n\n---\n\n2. Sitio web profesional\n- Precio: $500 MXN\n- Mantenimiento mensual: $50 MXN\n- Incluye:\n  - Hosting anual\n  - 1 cambio mensual\n  - Soporte técnico\n\n---\n\n3. Marketing digital\n- Desde $9,500 MXN mensual\n- Incluye gestión completa de campañas\n\n---\n\nDETECCIÓN DE SERVICIO (IMPORTANTE):\n\nDebes identificar qué servicio le interesa al cliente según la conversación.\n\nReglas:\n\n- Si habla de:\n  sitio web, página, web, landing → servicio_detectado = \"web\"\n\n- Si habla de:\n  publicidad, anuncios, Facebook Ads, clientes → servicio_detectado = \"publicidad\"\n\n- Si habla de:\n  automatización, bots, WhatsApp automático, IA → servicio_detectado = \"ia\"\n\n- Si NO está claro aún → servicio_detectado = \"none\"\n\nIMPORTANTE:\n\n- NO inventes el servicio\n- SOLO asigna uno si es claro\n- Si hay duda → usa \"none\"\n\n---\n\nMETODOLOGÍA:\n\nSe inicia con una prueba estratégica de $2,000 MXN en Meta Ads.\n\nEsto permite validar resultados antes de escalar la inversión.\n\n---\n\nIDENTIDAD Y SALUDO:\n\nTu nombre es Jorge y representas a Fairex.\n\nCONTEXTO DEL CLIENTE:\n\n- es_nuevo: {{ $json.es_nuevo }}\n\nREGLAS DE SALUDO:\n\n- SOLO debes presentarte si es_nuevo es true\n- Si es_nuevo es false → NO te presentes\n- NO repitas el saludo inicial en cada mensaje\n- Mantén continuidad natural en la conversación\n\nFORMA DE PRESENTACIÓN:\n\nSi es_nuevo es true:\n→ \"Hola 👋 soy Jorge del equipo de Fairex\"\n\nSi es_nuevo es false:\n→ Responde directo sin presentarte\n\n---\n\nDATOS DE CONTACTO:\n\nTeléfono: +529981505020\nCorreo: ventas@fairex.online\nSitio web: fairex.online\n\nREGLAS DE USO:\n\n- Solo compartir estos datos cuando el cliente los solicite o esté listo para avanzar\n- No compartirlos en el primer mensaje\n- No repetirlos innecesariamente\n\n---\n\nREGLAS DE COMUNICACIÓN:\n\n- Responde como humano, cercano y seguro\n- Mantén respuestas claras, estructuradas y persuasivas\n- No des toda la información de golpe\n- Adapta el nivel de explicación según el interés del cliente\n- Dirige siempre la conversación hacia una acción (responder, agendar o cerrar)\n- Genera confianza sin sonar genérico\n- Evita respuestas planas o tipo catálogo\n\n---\n\nENFOQUE DE VENTA:\n\n- No vendas servicios, vende resultados\n- No expliques de más, guía la conversación\n- No esperes a que el cliente decida, llévalo a decidir\n\nTÉCNICAS DE VENTA AVANZADAS:\n\nAplica técnicas de venta profesionales de forma natural durante la conversación:\n\n---\n\n1. DOBLE ALTERNATIVA (CIERRE INDIRECTO)\n\nNunca preguntes \"¿quieres contratar?\"\n\nUsa opciones cerradas:\n\nEjemplo:\n\"Te propongo esto 👇\n\n1. Podemos iniciar hoy mismo\n2. O si prefieres, apartamos tu implementación\n\n¿Cuál prefieres?\n\n---\n\n2. SESGO DE DECISIÓN (EVITAR EL “NO”)\n\nGuía al cliente a elegir, no a rechazar.\n\nEjemplo:\n\"¿Prefieres avanzar hoy o mañana?\"\n\n---\n\n3. PRUEBA SOCIAL\n\nGenera confianza mostrando que otros ya lo hacen.\n\nEjemplo:\n\"Esto es justo lo que están haciendo varios negocios para generar clientes constantes\"\n\n---\n\n4. AUTORIDAD\n\nRefuerza expertise sin exagerar.\n\nEjemplo:\n\"Nos especializamos en crear sistemas que generan clientes reales, no solo tráfico\"\n\n---\n\n5. ESCASEZ / URGENCIA (SUAVE)\n\nNo presiones, pero impulsa acción.\n\nEjemplo:\n\"Podemos empezar esta semana para que empieces a ver resultados lo antes posible\"\n\n---\n\n6. COMPROMISO PROGRESIVO\n\nLleva al cliente paso a paso:\n\n- Primero responde\n- Luego se interesa\n- Luego acepta\n- Luego cierra\n\nNunca intentes cerrar sin contexto.\n\n---\n\n7. ENFOQUE EN RESULTADOS\n\nNo vendas servicios, vende transformación.\n\nEjemplo:\n\"Esto te permite tener clientes constantes sin depender de recomendaciones\"\n\n---\n\n8. DETECCIÓN DE MOMENTO DE CIERRE\n\nSi el cliente:\n\n- pregunta precio\n- pregunta cómo pagar\n- pregunta cómo iniciar\n- pregunta tiempos\n- dice “me interesa”\n- dice “quiero empezar”\n- acepta la cotización\n- pide información de pago\n- pregunta por transferencia\n- pregunta por métodos de pago\n\n👉 Cambia inmediatamente a MODO CIERRE\n\nREGLAS DEL MODO CIERRE:\n\n- NO volver a explicar el sistema\n- NO volver a ofrecer cotización\n- NO repetir beneficios\n- NO reiniciar conversación\n- NO seguir descubriendo necesidades\n\nTu único objetivo es:\n\n1. cerrar\n2. obtener pago\n3. agendar implementación\n4. confirmar inicio\n\nDebes actuar como un cerrador de ventas profesional.\n\nLa prioridad es cobrar e iniciar.\n\nNO priorices llamadas.\n\nLa llamada solo existe si:\n- el cliente la pide\n- el cliente desconfía\n- el cliente tiene dudas importantes\n\nEn todos los demás casos:\ndirige la conversación al pago e inicio inmediato\n\nUsa mensajes:\n- más cortos\n- más seguros\n- más directos\n\nCuando el cliente pregunte cómo pagar:\n\n- ofrece:\n  • transferencia bancaria\n  • pago en efectivo\n\nIMPORTANTE:\nActualmente NO ofrecer links de pago automáticamente\n\ny pregunta:\n\"¿Prefieres transferencia o pago en efectivo?\"\n\nIMPORTANTE:\nSi el cliente ya aceptó la cotización:\nNO vuelvas a preguntar si quiere cotización\n\n---\n\n9. CIERRE DIRECTO (CUANDO SCORE > 75)\n\nReduce explicación y actúa:\n\nEjemplo:\n\"Perfecto 🔥\n\nPodemos empezar de inmediato.\n\n¿Prefieres que agendemos o te paso los datos para iniciar?\"\n\n---\n\n10. REGLA CLAVE\n\nSiempre:\n- Dirige la conversación\n- Mantén control\n- Avanza hacia una decisión\n\nNunca te quedes solo informando.\n\nESTRATEGIA:\n\n- Si pregunta precio → responde + cierre\n- Si muestra interés → avanzar o agendar\n- Si duda → refuerza beneficios\n- Si no es claro → pregunta estratégica\n\nFASE DE DESCUBRIMIENTO (OBLIGATORIA):\n\nAntes de vender, debes entender al cliente.\n\nSi NO sabes a qué se dedica su negocio:\n\nHaz preguntas una por una:\n\n- ¿A qué se dedica tu negocio?\n- ¿Cómo consigues clientes actualmente?\n- ¿Cuál es tu mayor problema para vender más?\n- ¿Has invertido en marketing antes?\n\nReglas:\n- No hagas todas las preguntas juntas\n- Haz solo una por mensaje\n- Usa tono natural\n- Espera respuesta antes de avanzar\n\nIMPORTANTE:\n\n- Debes identificar SIEMPRE el tipo de negocio antes de vender\n- Si no lo sabes, NO avances a propuesta\n- Personaliza siempre la conversación según el giro del cliente\n\nDIAGNÓSTICO:\n\nCuando el cliente responda:\n\n- Detecta su problema principal\n- Resúmelo en una frase clara\n\nEjemplo:\n\n\"Perfecto 👀 entonces actualmente dependes de recomendaciones y no tienes un flujo constante de clientes\"\n\nPROPUESTA PERSONALIZADA:\n\nDespués del diagnóstico:\n\n- Conecta tu servicio con SU problema\n- Menciona su tipo de negocio\n\nEjemplo:\n\n\"Justo ahí es donde entramos nosotros 🚀\n\nCreamos sistemas para que tu negocio de [tipo_negocio] reciba clientes constantes sin depender de recomendaciones\"\n\nCIERRE:\n\nSiempre lleva a una acción concreta enfocada en iniciar.\n\nOpciones válidas:\n\n1. Iniciar proceso de pago\n2. Apartar implementación\n\nIMPORTANTE:\n\n- La llamada NO es la opción principal\n- Solo mencionar llamada si el cliente:\n  - la pide\n  - tiene dudas fuertes\n  - necesita más confianza\n\nEjemplo:\n\n\"Te propongo esto 👇\n\n1. Agendamos una llamada y vemos cómo aplicarlo a tu negocio\n2. O si quieres, empezamos directo y lo implementamos\n\n¿Cuál te funciona mejor?\"\n\nCIERRE SEGÚN SCORE:\n\nSi score_lead es mayor a 75:\n\n- Cambia a tono directo\n- Reduce explicación\n- Enfócate en cerrar\n\nEjemplo:\n\n\"Perfecto 🔥\n\nPodemos empezar de inmediato.\n\n¿Prefieres transferencia o efectivo para iniciar?\"\n\nCIERRE CON ACCIÓN DE PAGO:\n\nCuando el cliente esté listo para avanzar:\n\n- Ofrece:\n  1. Iniciar proceso de pago\n\nREGLAS:\n\n- No envíes datos de pago sin intención clara\n- Prioriza cerrar con acción inmediata\n- Reduce fricción en el proceso\n\nOBJETIVO FINAL:\n\n1. Cerrar la venta\n2. Obtener confirmación de inicio\n3. Iniciar proceso de pago\n\nLa llamada solo debe usarse como último recurso\n\nPRIORIDAD:\n\n- Si el cliente está listo → cerrar\n- Si duda → reforzar y avanzar\n- Si está frío → descubrir información\n\nNunca te quedes solo informando.\nSiempre busca avanzar hacia una decisión.\n\nCLASIFICACIÓN INTERNA:\n\nClasifica al cliente en:\n\n- nuevo (apenas inicia conversación)\n- interesado (muestra interés pero aún evalúa)\n- caliente (listo para tomar acción o muy cercano a comprar)\n- cliente (ya compró o confirmó inicio)\n- perdido (rechaza o deja de responder claramente)\n\nSCORING PROFESIONAL:\n\nAsigna un score_lead del 0 al 100 basado en:\n\n- intención de compra\n- nivel de interés\n- cercanía al cierre\n- señales de pago\n- comportamiento del cliente\n- participación en la conversación\n\nESCALA:\n\n0-25 = Frío\n- Solo saluda\n- Pregunta muy general\n- No muestra intención clara\n\n26-50 = Curioso\n- Pregunta cómo funciona\n- Tiene interés superficial\n- Aún explora opciones\n\n51-75 = Interesado\n- Pregunta precios\n- Quiere detalles\n- Responde activamente\n- Tiene intención real pero aún duda\n\n76-100 = Listo para cerrar\n- Pregunta cómo pagar\n- Pregunta cómo iniciar\n- Quiere contratar\n- Acepta propuesta\n- Busca comenzar rápido\n\nIMPORTANTE:\n\n- score_lead SIEMPRE debe ser un número entre 0 y 100\n- Nunca usar escala del 1 al 10\n- Nunca usar números pequeños como 7, 8 o 9 para leads calientes\n- Un lead interesado normalmente debe estar entre 50 y 75\n- Un lead listo para comprar debe estar entre 80 y 100\n\nEjemplos correctos:\n20\n45\n60\n75\n90\n95\n\nEjemplos incorrectos:\n5\n7\n8\n9\n\nREGLAS:\n\n- Mientras más intención exista, mayor score\n- Si pregunta precios → subir score\n- Si pregunta métodos de pago → score arriba de 80\n- Si quiere iniciar → score arriba de 85\n- Si acepta la cotización → score arriba de 90\n- Nunca usar números bajos si el cliente ya mostró interés fuerte \n\nUSO DEL SCORE:\n\n- Score 0-25:\n→ Descubrir información\n→ Hacer preguntas\n→ Conversación ligera\n\n- Score 26-50:\n→ Explicar valor\n→ Detectar necesidad\n→ Generar interés\n\n- Score 51-75:\n→ Reforzar beneficios\n→ Resolver dudas\n→ Dirigir hacia cierre\n\n- Score 76-100:\n→ MODO CIERRE\n→ Reducir explicación\n→ Enfocarse en:\n   - pago\n   - inicio\n   - implementación\n\nSEÑALES PARA SUBIR A SCORE:\n\n- \"me interesa\"\n- \"quiero empezar\"\n- \"cómo funciona exactamente\"\n- \"cuánto cuesta\"\n- \"cómo pago\"\n- \"podemos iniciar\"\n- \"quiero más información para contratar\"\n\nSi detectas 2 o más de estas señales:\n\n→ score arriba de 75\n\nREGLAS IMPORTANTES:\n\n- El score debe actualizarse en cada mensaje según el comportamiento del cliente\n- Nunca bajes el score sin una razón clara\n- Si el cliente muestra señales de compra → sube el score inmediatamente\n- Si el cliente avanza en la conversación → aumenta progresivamente el score\n- Usa el score para adaptar el nivel de presión de venta\n\n---\n\nCLASIFICACIÓN AUTOMÁTICA DE LEAD:\n\nDebes calcular automáticamente:\n\n1. prioridad\n2. listo_cerrar\n3. ultima_accion\n\n-----------------------------------\n\nPRIORIDAD:\n\nSi score_lead es mayor a 75:\n\"urgente\"\n\nSi score_lead está entre 50 y 75:\n\"alta\"\n\nSi score_lead está entre 25 y 50:\n\"media\"\n\nSi score_lead es menor a 25:\n\"baja\"\n\n-----------------------------------\n\nLISTO_CERRAR:\n\ntrue:\n- si pregunta precio final\n- si pregunta cómo pagar\n- si quiere iniciar\n- si pide contrato\n- si pide cotización\n- si pregunta cuándo empezamos\n- si ya decidió\n\nfalse:\n- si solo pide información\n- si aún compara opciones\n- si tiene dudas grandes\n\n-----------------------------------\n\nULTIMA_ACCION:\n\nDebe guardar la última intención comercial detectada.\n\nEjemplos:\n\"pidio precios\"\n\"solicito cotizacion\"\n\"pregunto formas de pago\"\n\"quiere iniciar\"\n\"comparando opciones\"\n\"pidio informacion\"\n\"interesado en automatizacion\"\n\n---\n\nPRIORIDAD DE CIERRE (CRÍTICA):\n\nEl objetivo principal del sistema es convertir conversaciones en pagos reales.\n\nLa llamada NO es el objetivo principal.\n\nSolo usar llamada como último recurso estratégico.\n\nSi el cliente:\n- ya entendió\n- ya pidió precio\n- ya pidió cotización\n- ya quiere iniciar\n- ya pregunta cómo pagar\n\nENTONCES:\n\nDebes dirigir inmediatamente a:\n- transferencia\n- efectivo\n- confirmación de inicio\n\nNO regresar a fases anteriores.\n\n---\n\nMEMORIA Y CONTEXTO PERSISTENTE (CRÍTICO):\n\nDebes utilizar el historial completo de conversación para mantener continuidad natural y estratégica.\n\nREGLAS:\n\n- Recuerda información importante del cliente durante toda la conversación\n- No vuelvas a preguntar datos ya mencionados\n- Usa el contexto previo para responder como un humano real\n- Mantén continuidad aunque hayan pasado horas o días\n\nDEBES RECORDAR:\n\n- nombre del cliente\n- tipo de negocio\n- servicios que le interesan\n- problemas que mencionó\n- objeciones\n- presupuesto mencionado\n- si ya recibió cotización\n- si ya se habló de pagos\n- si ya hubo acuerdo previo\n- si ya se agendó algo\n- si ya mostró intención de compra\n- si ya pidió información específica\n\nCOMPORTAMIENTO INTELIGENTE:\n\n- Si el cliente retoma conversación:\n  continúa naturalmente sin reiniciar\n\n- Si ya hubo una cotización:\n  no vuelvas a ofrecer otra innecesariamente\n\n- Si ya mostró interés fuerte:\n  avanza hacia cierre sin regresar a descubrimiento\n\n- Si el cliente ya dijo su negocio:\n  NO volver a preguntar a qué se dedica\n\n- Si ya se habló del problema principal:\n  úsalo para reforzar el cierre\n\n- Si ya existe confianza:\n  usa tono más directo y natural\n\n- Si el cliente dejó de responder y vuelve:\n  retoma desde el último punto importante\n\nRESUMEN MENTAL DEL CLIENTE:\n\nInternamente debes construir un contexto mental continuo del cliente basado en:\n\n- etapa de venta\n- nivel de interés\n- objeciones\n- intención\n- historial previo\n- estado emocional\n- nivel de confianza\n- probabilidad de cierre\n\nIMPORTANTE:\n\nNunca actúes como si fuera una conversación nueva si ya existe historial.\n\nDebes responder con continuidad, memoria y contexto humano real\n\nREGLA DE CONTINUIDAD:\n\nSi el historial muestra que la conversación ya estaba avanzada:\n\n- NO reinicies\n- NO saludes nuevamente\n- NO hagas descubrimiento desde cero\n- continúa desde el punto exacto donde quedó\n\n---\n\nFORMATO DE SALIDA OBLIGATORIO (NO ROMPER):\n\nDebes responder SIEMPRE en JSON válido con EXACTAMENTE esta estructura:\n\n{\n  \"respuesta\": \"mensaje para el cliente\",\n  \"servicio_detectado\": \"web | publicidad | ia | none\",\n  \"intencion\": \"nuevo | interesado | caliente | cliente | perdido\",\n  \"score_lead\": 0,\n  \"prioridad\": \"baja | media | alta | urgente\",\n  \"listo_cerrar\": false,\n  \"ultima_accion\": \"\",\n  \"estado\": \"ACTIVO\",\n  \"nombre\": \"\",\n  \"numero\": \"\",\n  \"accion\": \"none | enviar_cotizacion\"\n}\n\nREGLAS IMPORTANTES:\n\n- SIEMPRE debes incluir el campo \"accion\"\n- Si el usuario pide cotización, precios o contratar → \"accion\": \"enviar_cotizacion\"\n- Si no → \"accion\": \"none\"\n- NO omitas ningún campo\n- NO cambies nombres de campos\n- NO agregues texto fuera del JSON\n\n---\n\nVALIDACIÓN FINAL (CRÍTICA):\n\nAntes de enviar la respuesta, debes verificar que el JSON incluye TODOS los campos obligatorios.\n\nSi falta alguno, debes corregirlo antes de responder.\n\nEspecial atención en:\n\n\"accion\"\n\nNunca puede faltar.\n\n---\n\nFORMATO DE RESPUESTA (OBLIGATORIO):\n\n- Usa saltos de línea con \\n para separar ideas\n- Divide el mensaje en bloques cortos\n- Máximo 2–3 líneas por bloque\n- Mantén claridad, ritmo y fluidez visual\n\nSIMPLIFICACIÓN DE RESPUESTA:\n\n- Prioriza avanzar la conversación sobre explicar\n- Explica solo lo mínimo necesario\n- Si ya puedes cerrar, NO expliques más\n\nCONTROL DE DETALLE:\n\n- Si el cliente NO pide detalles → NO explicar\n- Si el cliente pide info → responder corto + avanzar\n- Si insiste → ampliar gradualmente\n\nREGLA DE BREVEDAD (PRIORIDAD MÁXIMA):\n\n- Máximo 3 bloques de texto\n- Máximo 5 líneas totales\n- Máximo 1 idea principal por mensaje\n\n- NO dar listas largas\n- NO sobreexplicar\n- NO escribir como presentación\n\nOBJETIVO:\nMensajes rápidos, claros y fáciles de responder\n\nVELOCIDAD DE CONVERSACIÓN:\n\n- Escribe como WhatsApp, no como documento\n- Evita mensajes largos\n- Cada mensaje debe invitar a responder rápido\n\nESTRUCTURA FLEXIBLE:\n\nNo sigas siempre la misma estructura.\n\nA veces:\n- responde directo\n- a veces pregunta\n- a veces confirma\n- a veces cierra\n- a veces usa listas\n- a veces usa una sola línea\n\nLa conversación debe sentirse natural y humana\n\nMANEJO DE INFORMACIÓN:\n\n- Nunca inventes datos\n- Nunca digas \"tu número\" o \"tu correo\"\n- Siempre usa los datos definidos en DATOS DE CONTACTO\n- Si no tienes un dato, redirige a agendar o cierre\n\nREGLA FINAL:\n\n- Solo termina con pregunta si es natural\n- Si ya hay acuerdo o respuesta clara → NO preguntar\n- Nunca cierres el mensaje sin intentar avanzar\n- Prioriza acción sobre explicación\n\n\nCONTEXTO INTELIGENTE\n\n- Detecta en qué etapa va la conversación\n- Si ya se confirmó una cita presencial:\n  - NO volver a agendar\n  - NO insistir en lo mismo\n\nANTI-REPETICIÓN\n\n- No repetir frases como:\n  - “te explico”\n  - “cómo te ayudo”\n\n- No repetir estructuras de mensaje consecutivas\n- No usar siempre:\n  emoji + explicación + pregunta\n\nVaría entre:\n- mensajes cortos\n- mensajes directos\n- listas\n- confirmaciones rápidas\n- respuestas de una sola línea\n\nA veces responde sin emojis\n\nDebes parecer humano y natural\n\n- No repetir estructuras\n- Variar lenguaje en cada respuesta\n\nEMOJIS\n\n- Máximo 3 emojis por mensaje\n- No repetir siempre los mismos emojis\n\nESTILO DE PUNTUACIÓN (PRIORIDAD ALTA):\n\n- NO usar punto final en los mensajes\n- Terminar frases sin punto\n- Usar saltos de línea en lugar de puntos\n- Solo usar punto si es absolutamente necesario\n\nEjemplo correcto:\n\"Perfecto 👌\n\nTe explico rápido\n\nEsto te ayuda a generar clientes constantes\n\n¿Te gustaría verlo aplicado?\"\n\nEjemplo incorrecto:\n\"Perfecto. Te explico. Esto te ayuda...\"\n\nADAPTACIÓN\n\n- Si el cliente responde corto → responder corto\n- Si el cliente ya decidió → solo confirmar\n\nREGLA DE ORO\n\nSi ya existe un acuerdo (cita, visita, decisión):\nNO repetir el objetivo anterior\nSOLO confirmar o avanzar\n\n---\nREGLA DE GENERACIÓN DE COTIZACIÓN (CRÍTICA):\n\nSi el usuario menciona cotización, precio o contratar:\n\nNO generes la cotización inmediatamente.\n\nPrimero debes preguntar:\n\n\"¿Te gustaría que te envíe una cotización formal en PDF con todos los detalles?\"\n\n---\n\nSOLO si el usuario confirma claramente (ejemplo: \"sí\", \"mándala\", \"quiero la cotización\"):\n\nEntonces sí debes usar:\n\"accion\": \"enviar_cotizacion\"\n\n---\n\nSi el usuario NO confirma:\n\nDebes usar:\n\"accion\": \"none\"\n\n---\n\nREGLA ABSOLUTA:\n\nNunca generes una cotización sin confirmación explícita del usuario.\n\n---\n\nCONFIRMACIÓN DE COTIZACIÓN:\n\nSi previamente preguntaste al usuario si desea una cotización formal en PDF\ny el usuario responde algo como:\n\n* sí\n* si\n* claro\n* mándamela\n* envíala\n* adelante\n* ok\n* va\n* por favor\n* sí mándamela\n\nPOST-COTIZACIÓN (CRÍTICO):\n\nSi la cotización YA fue enviada:\n\n- NO volver a ofrecer cotización\n- NO volver a preguntar si desea PDF\n- NO volver a explicar precios\n\nDebes asumir que el cliente ya está evaluando compra.\n\nA partir de ese momento:\n\nTu objetivo es:\n- resolver dudas finales\n- facilitar el pago\n- impulsar decisión\n- cerrar\n\nSi el cliente pregunta:\n- cómo pagar\n- cómo iniciar\n- qué sigue\n- cuándo empezamos\n\nDebes responder directamente con proceso de inicio y pago\n\nENTONCES debes responder SIEMPRE con:\n\n{\n\"respuesta\": \"Perfecto 👌 estoy generando tu cotización formal\",\n\"servicio_detectado\": \"web | publicidad | ia | none\",\n\"intencion\": \"cliente\",\n\"score_lead\": 90,\n\"prioridad\": \"urgente\",\n\"listo_cerrar\": true,\n\"ultima_accion\": \"solicito cotizacion\",\n\"estado\": \"ACTIVO\",\n\"nombre\": \"\",\n\"numero\": \"\",\n\"accion\": \"enviar_cotizacion\"\n}\n\nIMPORTANTE:\n\nCuando el usuario confirme la cotización:\n\n* NO continúes conversación normal\n* NO vuelvas a saludar\n* NO hagas preguntas\n* NO expliques más\n\nSOLO genera la acción:\n\"accion\": \"enviar_cotizacion\"\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3392,
+        -112
+      ],
+      "id": "2588eac4-4687-48b3-8b0a-813b8758b9c7",
+      "name": "AGENTE IA VENTAS FAIREX"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        3360,
+        112
+      ],
+      "id": "9912de1d-8ad4-4690-ace9-e418cbaca1af",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "tlJYnDI2pYDPoi72",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ycloud.com/v2/whatsapp/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "=from",
+              "value": "={{ $('Webhook').item.json.body.whatsappInboundMessage.to }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $('Webhook').item.json.body.whatsappInboundMessage.from }}"
+            },
+            {
+              "name": "text.body",
+              "value": "={{ JSON.parse($node[\"AGENTE IA VENTAS FAIREX\"].json.output || '{}').respuesta }}"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5440,
+        272
+      ],
+      "id": "53cb2b79-1275-447d-a74a-5e079854a62f",
+      "name": "TEXTO",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "fk8Em2Ugo30pjfJ9",
+          "name": "YCLOUD"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg",
+          "mode": "list",
+          "cachedResultName": "CRM - FAIREX",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "numero": "={{ $node[\"NORMALIZAR DATOS\"].json[\"numero\"] }}",
+            "nombre": "={{ $node[\"NORMALIZAR DATOS\"].json[\"nombre\"] }}",
+            "ultimo_mensaje": "={{ $node[\"NORMALIZAR DATOS\"].json[\"mensaje\"] }}",
+            "fecha_ultimo_contacto": "={{ new Date().toLocaleString(\"es-MX\", { timeZone: \"America/Cancun\" }) }}",
+            "intencion": "={{ $node[\"CRM FAIREX\"].json.intencion || \"\" }}",
+            "score_lead": "={{ $node[\"CRM FAIREX\"].json.score_lead || \"\" }}",
+            "resumen_conversacion": "={{ \n  ($node[\"CRM FAIREX\"].json.resumen_conversacion || \"\") \n  + \"\\n\\n\" + \n  ($json.ultimo_mensaje || \"\")\n}}",
+            "origen": "WhatsApp",
+            "negocio": "FAIREX",
+            "etapa_venta": "={{ $node[\"CRM FAIREX\"].json.etapa_venta || \"NUEVO\" }}",
+            "interes": "={{ $node[\"CRM FAIREX\"].json.interes || \"pendiente\" }}",
+            "timestamp": "={{ Date.now() }}"
+          },
+          "matchingColumns": [
+            "numero"
+          ],
+          "schema": [
+            {
+              "id": "numero",
+              "displayName": "numero",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nombre",
+              "displayName": "nombre",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "estado",
+              "displayName": "estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "interes",
+              "displayName": "interes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "negocio",
+              "displayName": "negocio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ultimo_mensaje",
+              "displayName": "ultimo_mensaje",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resumen_conversacion",
+              "displayName": "resumen_conversacion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_ultimo_contacto",
+              "displayName": "fecha_ultimo_contacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "origen",
+              "displayName": "origen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "etapa_venta",
+              "displayName": "etapa_venta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "intencion",
+              "displayName": "intencion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "score_lead",
+              "displayName": "score_lead",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        880,
+        192
+      ],
+      "id": "0e8d4239-4afe-43d2-846f-e0aaac5ed1cd",
+      "name": "ACTUALIZAR CLIENTE 1 (Update Row)",
+      "credentials": {
+        "googleApi": {
+          "id": "yOzVan6enYFuOf1c",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d5ad289f-164b-41ee-9e7c-cdac03abbfc6",
+              "leftValue": "={{ JSON.parse($json.output).accion }}",
+              "rightValue": "enviar_cotizacion",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3696,
+        -96
+      ],
+      "id": "51b8c404-9870-4a95-b2c9-c03ab6daefef",
+      "name": "DETECCIÓN COTIZACIÓN"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "253a3c7e-9996-46be-9a1c-a11a856d7702",
+              "name": "mensaje_limpio",
+              "value": "={{ ($json.response || '').replace('[ENVIAR_COTIZACION]', '') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5648,
+        272
+      ],
+      "id": "1f2cea74-5ba4-4707-b246-d54e23a61477",
+      "name": "LIMPIAR MENSAJE 2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "253a3c7e-9996-46be-9a1c-a11a856d7702",
+              "name": "mensaje_limpio",
+              "value": "={{ $json.response.replace(\"[ENVIAR_COTIZACION]\", \"\") }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5488,
+        -592
+      ],
+      "id": "c3d9e07f-9461-4104-b845-419b594ed95c",
+      "name": "LIMPIAR MENSAJE 1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "40cc6821-25c3-4200-bb33-5e4142aa577d",
+              "name": "nombre",
+              "value": "={{ $node[\"AGENTE IA VENTAS FAIREX\"].json.nombre || \"Cliente\" }}",
+              "type": "string"
+            },
+            {
+              "id": "3f97dced-9603-48eb-9449-1e376986a40d",
+              "name": "numero",
+              "value": "={{ $node[\"AGENTE IA VENTAS FAIREX\"].json.numero || \"No especificado\" }}",
+              "type": "string"
+            },
+            {
+              "id": "31bd7cfa-695e-4e3c-aa94-86f475858c3f",
+              "name": "servicio",
+              "value": "={{ JSON.parse($node[\"AGENTE IA VENTAS FAIREX\"].json.output).servicio_detectado || \"ia\" }}",
+              "type": "string"
+            },
+            {
+              "id": "040a2b48-43d0-4320-8780-f476158f861a",
+              "name": "precio",
+              "value": "={{\n({\n  \"web\": \"3,000\",\n  \"publicidad\": \"9,500\",\n  \"ia\": \"10,000\"\n})[\n  JSON.parse($node[\"AGENTE IA VENTAS FAIREX\"].json.output).servicio_detectado\n] || \"Cotización personalizada\"\n}}",
+              "type": "string"
+            },
+            {
+              "id": "2fa06130-91f4-4bc7-be22-bfa64e328843",
+              "name": "fecha",
+              "value": "={{ new Date().toLocaleString(\"es-MX\", { timeZone: \"America/Cancun\" }) }}",
+              "type": "string"
+            },
+            {
+              "id": "2a2efbe1-4d9f-4002-9aa2-b318dc6015c9",
+              "name": "descripcion",
+              "value": "={{ \n({\n  \"web\": \"Desarrollo de sitio web profesional optimizado para conversión.\",\n  \"publicidad\": \"Gestión de campañas publicitarias para generación de clientes.\",\n  \"ia\": \"Automatización con inteligencia artificial para ventas y atención.\"\n})[\n  $node[\"AGENTE IA VENTAS FAIREX\"].json.servicio_detectado\n] || \"Servicio personalizado\"\n}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        5680,
+        -592
+      ],
+      "id": "8d803ad3-8ff6-440e-8dda-a5553f414e85",
+      "name": "DATOS COTIZACIÓN"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6eb248dc-b908-4742-bf8a-7a0d30272d32",
+              "name": "es_nuevo",
+              "value": "={{ $json.etapa_venta === \"nuevo\" }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1296,
+        64
+      ],
+      "id": "2a59048c-4d34-48ac-ac2c-512437395a18",
+      "name": "ES NUEVO"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5872,
+        272
+      ],
+      "id": "695ac88d-88d8-4f63-b12b-e0fdd34584d6",
+      "name": "No Operation, do nothing4"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://rest.apitemplate.io/v2/create-pdf",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "template_id",
+              "value": "70f77b231ddcb79e"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        5888,
+        -592
+      ],
+      "id": "bcbb6b79-fd22-4fb9-8b21-45271ec431a7",
+      "name": "GENERAR PDF COTIZACIÓN",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2gFl7ypRD3Rxyra8",
+          "name": "TemplatePDF"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg",
+          "mode": "list",
+          "cachedResultName": "CRM - FAIREX",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "numero": "={{ $node[\"NORMALIZAR DATOS\"].json[\"numero\"] }}",
+            "nombre": "={{ $node[\"NORMALIZAR DATOS\"].json[\"nombre\"] }}",
+            "estado": "={{  \n  ($node[\"CRM FAIREX\"].json.estado || $json.estado || \"ACTIVO\").trim().toUpperCase()\n}}",
+            "ultimo_mensaje": "={{ $node[\"NORMALIZAR DATOS\"].json[\"mensaje\"] }}",
+            "fecha_ultimo_contacto": "={{ new Date().toLocaleString(\"es-MX\", { timeZone: \"America/Cancun\" }) }}",
+            "intencion": "={{ JSON.parse($json.output || '{}').intencion || \"nuevo\" }}",
+            "score_lead": "={{ JSON.parse($json.output || '{}').score_lead || \"1\" }}",
+            "resumen_conversacion": "={{ JSON.parse($json.output || '{}').respuesta }}",
+            "origen": "WhatsApp",
+            "negocio": "FAIREX",
+            "etapa_venta": "={{ \n  Number($json.score_lead) === 4 \n    ? \"CIERRE_ENVIADO\" \n    : Number($json.score_lead) === 3 \n      ? \"CALIENTE\" \n      : Number($json.score_lead) === 2 \n        ? \"INTERESADO\" \n        : \"NUEVO\"\n}}",
+            "timestamp": "={{ Date.now() }}"
+          },
+          "matchingColumns": [
+            "numero"
+          ],
+          "schema": [
+            {
+              "id": "numero",
+              "displayName": "numero",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nombre",
+              "displayName": "nombre",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "estado",
+              "displayName": "estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "interes",
+              "displayName": "interes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "negocio",
+              "displayName": "negocio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ultimo_mensaje",
+              "displayName": "ultimo_mensaje",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resumen_conversacion",
+              "displayName": "resumen_conversacion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_ultimo_contacto",
+              "displayName": "fecha_ultimo_contacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "origen",
+              "displayName": "origen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "etapa_venta",
+              "displayName": "etapa_venta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "intencion",
+              "displayName": "intencion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "score_lead",
+              "displayName": "score_lead",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3968,
+        16
+      ],
+      "id": "20fdb5e4-9a2b-40e7-a6b6-045d1c7be178",
+      "name": "ACTUALIZAR CLIENTE 2 NORMAL",
+      "credentials": {
+        "googleApi": {
+          "id": "yOzVan6enYFuOf1c",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg",
+          "mode": "list",
+          "cachedResultName": "CRM - FAIREX",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "numero": "={{ $node[\"NORMALIZAR DATOS\"].json[\"numero\"] }}",
+            "nombre": "={{ $node[\"NORMALIZAR DATOS\"].json[\"nombre\"] }}",
+            "estado": "={{  \n  ($node[\"CRM FAIREX\"].json.estado || $json.estado || \"ACTIVO\").trim().toUpperCase()\n}}",
+            "ultimo_mensaje": "={{ $node[\"NORMALIZAR DATOS\"].json[\"mensaje\"] }}",
+            "fecha_ultimo_contacto": "={{ new Date().toLocaleString(\"es-MX\", { timeZone: \"America/Cancun\" }) }}",
+            "intencion": "={{ JSON.parse($json.output || '{}').intencion || \"nuevo\" }}",
+            "score_lead": "={{ JSON.parse($json.output || '{}').score_lead || \"1\" }}",
+            "resumen_conversacion": "={{ JSON.parse($json.output || '{}').respuesta }}",
+            "origen": "WhatsApp",
+            "negocio": "FAIREX",
+            "etapa_venta": "={{ \n  Number($json.score_lead) === 4 \n    ? \"CIERRE_ENVIADO\" \n    : Number($json.score_lead) === 3 \n      ? \"CALIENTE\" \n      : Number($json.score_lead) === 2 \n        ? \"INTERESADO\" \n        : \"NUEVO\"\n}}",
+            "timestamp": "={{ Date.now() }}"
+          },
+          "matchingColumns": [
+            "numero"
+          ],
+          "schema": [
+            {
+              "id": "numero",
+              "displayName": "numero",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nombre",
+              "displayName": "nombre",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "estado",
+              "displayName": "estado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "interes",
+              "displayName": "interes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "negocio",
+              "displayName": "negocio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ultimo_mensaje",
+              "displayName": "ultimo_mensaje",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resumen_conversacion",
+              "displayName": "resumen_conversacion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_ultimo_contacto",
+              "displayName": "fecha_ultimo_contacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "origen",
+              "displayName": "origen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "etapa_venta",
+              "displayName": "etapa_venta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "intencion",
+              "displayName": "intencion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "score_lead",
+              "displayName": "score_lead",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3984,
+        -256
+      ],
+      "id": "67f28f87-0cd5-4fae-9df9-0a1f49bd3673",
+      "name": "ACTUALIZAR CLIENTE 2 COTIZACION",
+      "credentials": {
+        "googleApi": {
+          "id": "yOzVan6enYFuOf1c",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ycloud.com/v2/whatsapp/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "=from",
+              "value": "={{ $('Webhook').item.json.body.whatsappInboundMessage.to }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $('Webhook').item.json.body.whatsappInboundMessage.from }}"
+            },
+            {
+              "name": "text.body",
+              "value": "=Aquí tienes tu cotización lista 👇📄\n\n{{$json[\"download_url\"]}}\n\nEsta es la propuesta exacta para empezar a generar resultados\n\nSi te hace sentido, podemos activarlo esta misma semana 🚀"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        6096,
+        -592
+      ],
+      "id": "e26dcddb-d6cc-4587-aafd-a5747bf39889",
+      "name": "TEXTO 2",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "fk8Em2Ugo30pjfJ9",
+          "name": "YCLOUD"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4b35ce8c-b153-4eee-9768-c52e6eaeecd3",
+              "leftValue": "={{ $('GUARDAR TIMESTAMP').item.json.timestamp_actual }}",
+              "rightValue": "={{ $('ULTIMO TIMESTAMP').item.json.timestamp }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3008,
+        -112
+      ],
+      "id": "49f98323-220e-4e68-8658-79bf4d99f98d",
+      "name": "VALIDAR ULTIMO MENSAJE"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7e0b0dbe-cf60-48ec-b6bc-8b75f0ef2e09",
+              "name": "timestamp_actual",
+              "value": "={{ Date.now() }}",
+              "type": "string"
+            },
+            {
+              "id": "8a65223b-052c-40a2-8878-b0a0df8131fb",
+              "name": "numero_limpio",
+              "value": "={{ $('Webhook').item.json.body.whatsappInboundMessage.from.replace(/\\D/g, '').slice(-12) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2032,
+        -112
+      ],
+      "id": "e6137c09-e465-40ff-920e-c939bbeb5fe2",
+      "name": "GUARDAR TIMESTAMP"
+    },
+    {
+      "parameters": {
+        "amount": 15
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2240,
+        -112
+      ],
+      "id": "68fe4b53-eca0-405f-a882-3e6fb395396d",
+      "name": "ESPERAR MENSAJES",
+      "webhookId": "00efb300-f68e-4fed-9526-20dbd34ab971"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg",
+          "mode": "list",
+          "cachedResultName": "CRM - FAIREX",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1lt5VlY2yRalO7QEqM7XoVPbcXNtOjkwxBYru9JhflWg/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "numero",
+              "lookupValue": "={{ $('GUARDAR TIMESTAMP').item.json.numero_limpio }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2432,
+        -112
+      ],
+      "id": "0fdeb944-59cb-4430-b603-6acc30ba0e5f",
+      "name": "OBTENER ULTIMO TIMESTAMP",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleApi": {
+          "id": "yOzVan6enYFuOf1c",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3264,
+        336
+      ],
+      "id": "f1b55c1e-04a6-444b-8386-6da211940c5b",
+      "name": "No Operation, do nothing1"
+    },
+    {
+      "parameters": {
+        "sortFieldsUi": {
+          "sortField": [
+            {
+              "fieldName": "timestamp",
+              "order": "descending"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.sort",
+      "typeVersion": 1,
+      "position": [
+        2624,
+        -112
+      ],
+      "id": "c6129fd6-cae1-4e61-b413-7d5a6c0f14b4",
+      "name": "ORDENAR TIMESTAMP"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        2816,
+        -112
+      ],
+      "id": "b22ea4ea-e497-49a8-8baf-a27cc6bc8f5d",
+      "name": "ULTIMO TIMESTAMP"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('VALIDAR ULTIMO MENSAJE').item.json.numero }}",
+        "contextWindowLength": 30
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        3504,
+        112
+      ],
+      "id": "d506c1ef-fa14-4914-901d-46ec6eb27329",
+      "name": "Postgres Chat Memory",
+      "credentials": {
+        "postgres": {
+          "id": "UQcvUffsbjOOuMj3",
+          "name": "SUPABASE"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        4304,
+        544
+      ],
+      "id": "1ec8e0d8-ff7f-426e-88fe-c94ec9bc3386",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "tlJYnDI2pYDPoi72",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Cliente: {{ $('ULTIMO TIMESTAMP').item.json.nombre }}\n\nÚltimo mensaje cliente:\n{{ $('ULTIMO TIMESTAMP').item.json.ultimo_mensaje }}\n\nResumen conversación actual:\n{{ $('ULTIMO TIMESTAMP').item.json.resumen_conversacion }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Eres un sistema experto en análisis comercial y memoria CRM.\n\nTu trabajo es analizar conversaciones de ventas.\n\nDebes detectar:\n\n- resumen_inteligente\n- etapa_venta\n- nivel_interes\n- objeciones\n- necesidades\n- score_lead\n- prioridad\n- listo_cerrar\n- ultima_accion\n- followup_pendiente\n- fecha_followup\n- intentos_followup\n\nREGLAS:\n\n- El resumen debe ser corto, ejecutivo y útil.\n- Detecta intención real.\n- Detecta objeciones indirectas.\n- Detecta necesidades comerciales.\n- Detecta prioridad comercial del lead.\n- Detecta si el lead está listo para cerrar.\n- Detecta si necesita seguimiento.\n- Detecta cuál es la siguiente acción comercial.\n- La etapa de venta debe ser:\n  contacto_inicial,\n  interesado,\n  caliente,\n  seguimiento,\n  cerrado,\n  perdido\n\nSCORE_LEAD:\n\nAsigna un score del 1 al 100.\n\nUsa:\n\n- 90-100 = listo para comprar\n- 70-89 = muy interesado\n- 50-69 = interés moderado\n- 30-49 = curioso\n- 1-29 = poco interés\n\nPRIORIDAD:\n\nAsigna:\n\n- alta\n- media\n- baja\n\nLISTO_CERRAR:\n\nUsa true si:\n- quiere iniciar\n- pregunta pagos\n- pregunta tiempos\n- pregunta contratación\n- acepta propuesta\n- pide siguiente paso\n\nUsa false en cualquier otro caso.\n\nIMPORTANTE:\n\nlisto_cerrar NO significa venta cerrada.\n\nUn lead puede estar listo_cerrar = true\ny seguir requiriendo seguimiento comercial.\n\nULTIMA_ACCION:\n\nResume en una sola frase:\nqué está esperando el cliente o cuál es el siguiente paso.\n\nFOLLOWUP_PENDIENTE:\n\nUsa true si:\n- el cliente dijo luego\n- mañana\n- déjame pensarlo\n- después te aviso\n- necesito revisarlo\n- dejó de responder\n- está interesado pero aún no concreta\n- mostró intención de compra pero no ha realizado el pago\n- mostró intención de compra pero no ha confirmado inicio\n\nUsa false si:\n- ya realizó el pago\n- ya cerró la compra\n- rechazó definitivamente\n- solicitó no ser contactado\n\nFECHA_FOLLOWUP:\n\nSi followup_pendiente es true:\n\nGenera SIEMPRE una fecha en formato ISO 8601.\n\nEjemplos:\n\n2026-06-01T10:00:00-05:00\n2026-06-03T10:00:00-05:00\n\nNunca uses texto como:\n\"mañana\"\n\"más tarde\"\n\"1 semana\"\n\nSiempre devolver una fecha válida.\n\nINTENTOS_FOLLOWUP:\n\nNo modificar este valor.\nEs controlado por los workflows de automatización.\n\nIMPORTANTE:\n\n- NO agregues explicaciones\n- NO agregues texto extra\n- NO uses markdown\n- NO uses bloques de código\n- SOLO responde JSON válido\n\nEl JSON debe incluir SIEMPRE:\n\n{\n \"resumen_inteligente\":\"\",\n \"etapa_venta\":\"\",\n \"nivel_interes\":\"\",\n \"objeciones\":\"\",\n \"necesidades\":\"\",\n \"score_lead\":0,\n \"prioridad\":\"\",\n \"listo_cerrar\": false,\n \"ultima_accion\":\"\",\n \"followup_pendiente\": false,\n \"fecha_followup\":\"\",\n \"intentos_followup\":0\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        4336,
+        320
+      ],
+      "id": "2ded9b73-5cbe-42c2-8167-2ae30bd208ff",
+      "name": "MEMORIA INTELIGENTE"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n \"resumen_inteligente\": \"texto\",\n \"etapa_venta\": \"texto\",\n \"nivel_interes\": \"texto\",\n \"objeciones\": \"texto\",\n \"necesidades\": \"texto\",\n \"score_lead\": 0,\n \"prioridad\": \"texto\",\n \"listo_cerrar\": true,\n \"ultima_accion\": \"texto\",\n \"followup_pendiente\": true,\n \"fecha_followup\": \"texto\",\n \"intentos_followup\": 0\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        4512,
+        528
+      ],
+      "id": "5295c894-b44b-42b5-8b1c-8cd131b404ce",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "lead_memory",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "numero",
+              "condition": "eq",
+              "keyValue": "={{ $('ULTIMO TIMESTAMP').item.json.numero }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        4672,
+        320
+      ],
+      "id": "c8cef924-54fa-492c-aee8-fd4d6c44636e",
+      "name": "VERIFICAR LEAD MEMORY",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "ATXsHHAn8UN3U2KE",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4088272a-d2a1-46e0-a126-f57bea8386c0",
+              "leftValue": "={{ $json.id.toString() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4880,
+        320
+      ],
+      "id": "49cb6a57-3db2-4c96-8052-dc333e57b709",
+      "name": "EXISTE MEMORIA"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "lead_memory",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('VERIFICAR LEAD MEMORY').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "numero",
+              "fieldValue": "={{ $('ULTIMO TIMESTAMP').item.json.numero }}"
+            },
+            {
+              "fieldId": "resumen_inteligente",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.resumen_inteligente }}"
+            },
+            {
+              "fieldId": "etapa_venta",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.etapa_venta }}"
+            },
+            {
+              "fieldId": "nivel_interes",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.nivel_interes }}"
+            },
+            {
+              "fieldId": "objeciones",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.objeciones }}"
+            },
+            {
+              "fieldId": "necesidades",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.necesidades }}"
+            },
+            {
+              "fieldId": "score_lead",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.score_lead }}"
+            },
+            {
+              "fieldId": "prioridad",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.prioridad }}"
+            },
+            {
+              "fieldId": "listo_cerrar",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.listo_cerrar }}"
+            },
+            {
+              "fieldId": "ultima_accion",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.ultima_accion }}"
+            },
+            {
+              "fieldId": "ultimo_contacto",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        5136,
+        144
+      ],
+      "id": "561bba00-2220-4f2c-a7ff-b1f418d1956d",
+      "name": "ACTUALIZAR MEMORIA",
+      "credentials": {
+        "supabaseApi": {
+          "id": "ATXsHHAn8UN3U2KE",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "lead_memory",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "numero",
+              "fieldValue": "={{ $('ULTIMO TIMESTAMP').item.json.numero }}"
+            },
+            {
+              "fieldId": "resumen_inteligente",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.resumen_inteligente }}"
+            },
+            {
+              "fieldId": "etapa_venta",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.etapa_venta }}"
+            },
+            {
+              "fieldId": "nivel_interes",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.nivel_interes }}"
+            },
+            {
+              "fieldId": "objeciones",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.objeciones }}"
+            },
+            {
+              "fieldId": "necesidades",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.necesidades }}"
+            },
+            {
+              "fieldId": "score_lead",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.score_lead }}"
+            },
+            {
+              "fieldId": "prioridad",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.prioridad }}"
+            },
+            {
+              "fieldId": "listo_cerrar",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.listo_cerrar }}"
+            },
+            {
+              "fieldId": "ultima_accion",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE').item.json.output.ultima_accion }}"
+            },
+            {
+              "fieldId": "ultimo_contacto",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        5136,
+        416
+      ],
+      "id": "a16914fe-7758-4e40-a330-b2d65f5caffe",
+      "name": "CREAR MEMORIA",
+      "credentials": {
+        "supabaseApi": {
+          "id": "ATXsHHAn8UN3U2KE",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        4288,
+        -320
+      ],
+      "id": "bafa939d-d87d-4818-9444-2963a9adaed0",
+      "name": "OpenAI Chat Model2",
+      "credentials": {
+        "openAiApi": {
+          "id": "tlJYnDI2pYDPoi72",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Cliente: {{ $('ULTIMO TIMESTAMP').item.json.nombre }}\n\nÚltimo mensaje cliente:\n{{ $('ULTIMO TIMESTAMP').item.json.ultimo_mensaje }}\n\nResumen conversación actual:\n{{ $('ULTIMO TIMESTAMP').item.json.resumen_conversacion }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "Eres un sistema experto en análisis comercial y memoria CRM.\n\nTu trabajo es analizar conversaciones de ventas.\n\nDebes detectar:\n\n- resumen_inteligente\n- etapa_venta\n- nivel_interes\n- objeciones\n- necesidades\n- score_lead\n- prioridad\n- listo_cerrar\n- ultima_accion\n- followup_pendiente\n- fecha_followup\n- intentos_followup\n\nREGLAS:\n\n- El resumen debe ser corto, ejecutivo y útil.\n- Detecta intención real.\n- Detecta objeciones indirectas.\n- Detecta necesidades comerciales.\n- Detecta prioridad comercial del lead.\n- Detecta si el lead está listo para cerrar.\n- Detecta si necesita seguimiento.\n- Detecta cuál es la siguiente acción comercial.\n- La etapa de venta debe ser:\n  contacto_inicial,\n  interesado,\n  caliente,\n  seguimiento,\n  cerrado,\n  perdido\n\nSCORE_LEAD:\n\nAsigna un score del 1 al 100.\n\nUsa:\n\n- 90-100 = listo para comprar\n- 70-89 = muy interesado\n- 50-69 = interés moderado\n- 30-49 = curioso\n- 1-29 = poco interés\n\nPRIORIDAD:\n\nAsigna:\n\n- alta\n- media\n- baja\n\nLISTO_CERRAR:\n\nUsa true si:\n- quiere iniciar\n- pregunta pagos\n- pregunta tiempos\n- pregunta contratación\n- acepta propuesta\n- pide siguiente paso\n\nUsa false en cualquier otro caso.\n\nIMPORTANTE:\n\nlisto_cerrar NO significa venta cerrada.\n\nUn lead puede estar listo_cerrar = true\ny seguir requiriendo seguimiento comercial.\n\nULTIMA_ACCION:\n\nResume en una sola frase:\nqué está esperando el cliente o cuál es el siguiente paso.\n\nFOLLOWUP_PENDIENTE:\n\nUsa true si:\n- el cliente dijo luego\n- mañana\n- déjame pensarlo\n- después te aviso\n- necesito revisarlo\n- dejó de responder\n- está interesado pero aún no concreta\n- mostró intención de compra pero no ha realizado el pago\n- mostró intención de compra pero no ha confirmado inicio\n\nUsa false si:\n- ya realizó el pago\n- ya cerró la compra\n- rechazó definitivamente\n- solicitó no ser contactado\n\nFECHA_FOLLOWUP:\n\nSi followup_pendiente es true:\n\nGenera SIEMPRE una fecha en formato ISO 8601.\n\nEjemplos:\n\n2026-06-01T10:00:00-05:00\n2026-06-03T10:00:00-05:00\n\nNunca uses texto como:\n\"mañana\"\n\"más tarde\"\n\"1 semana\"\n\nSiempre devolver una fecha válida.\n\nINTENTOS_FOLLOWUP:\n\nNo modificar este valor.\nEs controlado por los workflows de automatización.\n\nIMPORTANTE:\n\n- NO agregues explicaciones\n- NO agregues texto extra\n- NO uses markdown\n- NO uses bloques de código\n- SOLO responde JSON válido\n\nEl JSON debe incluir SIEMPRE:\n\n{\n \"resumen_inteligente\":\"\",\n \"etapa_venta\":\"\",\n \"nivel_interes\":\"\",\n \"objeciones\":\"\",\n \"necesidades\":\"\",\n \"score_lead\":0,\n \"prioridad\":\"\",\n \"listo_cerrar\": false,\n \"ultima_accion\":\"\",\n \"followup_pendiente\": false,\n \"fecha_followup\":\"\",\n \"intentos_followup\":0\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        4320,
+        -544
+      ],
+      "id": "802407bf-1611-411b-abe9-ae6f2695ac36",
+      "name": "MEMORIA INTELIGENTE1"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n \"resumen_inteligente\": \"texto\",\n \"etapa_venta\": \"texto\",\n \"nivel_interes\": \"texto\",\n \"objeciones\": \"texto\",\n \"necesidades\": \"texto\",\n \"score_lead\": 0,\n \"prioridad\": \"texto\",\n \"listo_cerrar\": true,\n \"ultima_accion\": \"texto\",\n \"followup_pendiente\": true,\n \"fecha_followup\": \"texto\",\n \"intentos_followup\": 0\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        4496,
+        -336
+      ],
+      "id": "c181834d-cdac-4899-819f-0fe7a191e4cd",
+      "name": "Structured Output Parser1"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "lead_memory",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "numero",
+              "condition": "eq",
+              "keyValue": "={{ $('ULTIMO TIMESTAMP').item.json.numero }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        4656,
+        -544
+      ],
+      "id": "0598061c-8c4a-4ea3-8295-0b19242788df",
+      "name": "VERIFICAR LEAD MEMORY1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "ATXsHHAn8UN3U2KE",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4088272a-d2a1-46e0-a126-f57bea8386c0",
+              "leftValue": "={{ $json.id.toString() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4864,
+        -544
+      ],
+      "id": "c6a4447b-1a17-4d7a-b5e1-1ff8e2797eef",
+      "name": "EXISTE MEMORIA1"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "lead_memory",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('VERIFICAR LEAD MEMORY1').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "numero",
+              "fieldValue": "={{ $('ULTIMO TIMESTAMP').item.json.numero }}"
+            },
+            {
+              "fieldId": "resumen_inteligente",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.resumen_inteligente }}"
+            },
+            {
+              "fieldId": "etapa_venta",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.etapa_venta }}"
+            },
+            {
+              "fieldId": "nivel_interes",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.nivel_interes }}"
+            },
+            {
+              "fieldId": "objeciones",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.objeciones }}"
+            },
+            {
+              "fieldId": "necesidades",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.necesidades }}"
+            },
+            {
+              "fieldId": "score_lead",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.score_lead }}"
+            },
+            {
+              "fieldId": "prioridad",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.prioridad }}"
+            },
+            {
+              "fieldId": "listo_cerrar",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.listo_cerrar }}"
+            },
+            {
+              "fieldId": "ultima_accion",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.ultima_accion }}"
+            },
+            {
+              "fieldId": "ultimo_contacto",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        5120,
+        -720
+      ],
+      "id": "6d8ae441-8cbf-4f66-9e9d-c17ad2e1772c",
+      "name": "ACTUALIZAR MEMORIA1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "ATXsHHAn8UN3U2KE",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "lead_memory",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "numero",
+              "fieldValue": "={{ $('ULTIMO TIMESTAMP').item.json.numero }}"
+            },
+            {
+              "fieldId": "resumen_inteligente",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.resumen_inteligente }}"
+            },
+            {
+              "fieldId": "etapa_venta",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.etapa_venta }}"
+            },
+            {
+              "fieldId": "nivel_interes",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.nivel_interes }}"
+            },
+            {
+              "fieldId": "objeciones",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.objeciones }}"
+            },
+            {
+              "fieldId": "necesidades",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.necesidades }}"
+            },
+            {
+              "fieldId": "score_lead",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.score_lead }}"
+            },
+            {
+              "fieldId": "prioridad",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.prioridad }}"
+            },
+            {
+              "fieldId": "listo_cerrar",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.listo_cerrar }}"
+            },
+            {
+              "fieldId": "ultima_accion",
+              "fieldValue": "={{ $('MEMORIA INTELIGENTE1').item.json.output.ultima_accion }}"
+            },
+            {
+              "fieldId": "ultimo_contacto",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        5120,
+        -448
+      ],
+      "id": "f7ce084f-1d6d-48c4-8b70-39379b04ab13",
+      "name": "CREAR MEMORIA1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "ATXsHHAn8UN3U2KE",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "DETECCION DE CHAT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DETECCION DE CHAT": {
+      "main": [
+        [
+          {
+            "node": "NORMALIZAR DATOS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DETECCION DE REGISTRO": {
+      "main": [
+        [
+          {
+            "node": "CREAR CLIENTE (Append Row)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ACTUALIZAR CLIENTE 1 (Update Row)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FILTRO EXCLUSIÓN": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ES NUEVO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ES CLIENTE": {
+      "main": [
+        [
+          {
+            "node": "GUARDAR TIMESTAMP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ES INTERESADO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ES INTERESADO": {
+      "main": [
+        [
+          {
+            "node": "GUARDAR TIMESTAMP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CREAR CLIENTE (Append Row)": {
+      "main": [
+        [
+          {
+            "node": "FILTRO EXCLUSIÓN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM FAIREX": {
+      "main": [
+        [
+          {
+            "node": "DETECCION DE REGISTRO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NORMALIZAR DATOS": {
+      "main": [
+        [
+          {
+            "node": "CRM FAIREX",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AGENTE IA VENTAS FAIREX",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AGENTE IA VENTAS FAIREX": {
+      "main": [
+        [
+          {
+            "node": "DETECCIÓN COTIZACIÓN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ACTUALIZAR CLIENTE 1 (Update Row)": {
+      "main": [
+        [
+          {
+            "node": "FILTRO EXCLUSIÓN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TEXTO": {
+      "main": [
+        [
+          {
+            "node": "LIMPIAR MENSAJE 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DETECCIÓN COTIZACIÓN": {
+      "main": [
+        [
+          {
+            "node": "ACTUALIZAR CLIENTE 2 COTIZACION",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ACTUALIZAR CLIENTE 2 NORMAL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LIMPIAR MENSAJE 1": {
+      "main": [
+        [
+          {
+            "node": "DATOS COTIZACIÓN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ES NUEVO": {
+      "main": [
+        [
+          {
+            "node": "ES CLIENTE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LIMPIAR MENSAJE 2": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATOS COTIZACIÓN": {
+      "main": [
+        [
+          {
+            "node": "GENERAR PDF COTIZACIÓN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ACTUALIZAR CLIENTE 2 NORMAL": {
+      "main": [
+        [
+          {
+            "node": "MEMORIA INTELIGENTE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ACTUALIZAR CLIENTE 2 COTIZACION": {
+      "main": [
+        [
+          {
+            "node": "MEMORIA INTELIGENTE1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GENERAR PDF COTIZACIÓN": {
+      "main": [
+        [
+          {
+            "node": "TEXTO 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VALIDAR ULTIMO MENSAJE": {
+      "main": [
+        [
+          {
+            "node": "AGENTE IA VENTAS FAIREX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GUARDAR TIMESTAMP": {
+      "main": [
+        [
+          {
+            "node": "ESPERAR MENSAJES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ESPERAR MENSAJES": {
+      "main": [
+        [
+          {
+            "node": "OBTENER ULTIMO TIMESTAMP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OBTENER ULTIMO TIMESTAMP": {
+      "main": [
+        [
+          {
+            "node": "ORDENAR TIMESTAMP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ORDENAR TIMESTAMP": {
+      "main": [
+        [
+          {
+            "node": "ULTIMO TIMESTAMP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ULTIMO TIMESTAMP": {
+      "main": [
+        [
+          {
+            "node": "VALIDAR ULTIMO MENSAJE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AGENTE IA VENTAS FAIREX",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "MEMORIA INTELIGENTE",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MEMORIA INTELIGENTE": {
+      "main": [
+        [
+          {
+            "node": "VERIFICAR LEAD MEMORY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "MEMORIA INTELIGENTE",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VERIFICAR LEAD MEMORY": {
+      "main": [
+        [
+          {
+            "node": "EXISTE MEMORIA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXISTE MEMORIA": {
+      "main": [
+        [
+          {
+            "node": "ACTUALIZAR MEMORIA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CREAR MEMORIA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CREAR MEMORIA": {
+      "main": [
+        [
+          {
+            "node": "TEXTO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ACTUALIZAR MEMORIA": {
+      "main": [
+        [
+          {
+            "node": "TEXTO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "MEMORIA INTELIGENTE1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MEMORIA INTELIGENTE1": {
+      "main": [
+        [
+          {
+            "node": "VERIFICAR LEAD MEMORY1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "MEMORIA INTELIGENTE1",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VERIFICAR LEAD MEMORY1": {
+      "main": [
+        [
+          {
+            "node": "EXISTE MEMORIA1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXISTE MEMORIA1": {
+      "main": [
+        [
+          {
+            "node": "ACTUALIZAR MEMORIA1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CREAR MEMORIA1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ACTUALIZAR MEMORIA1": {
+      "main": [
+        [
+          {
+            "node": "LIMPIAR MENSAJE 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CREAR MEMORIA1": {
+      "main": [
+        [
+          {
+            "node": "LIMPIAR MENSAJE 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ea04c27c-755f-483f-bed4-0dc33e3ab931",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "31617b220c2072b2d31718600c61e97e86fe3fc3a3e3a3e575f94d1765c4af38"
+  },
+  "id": "nCSZWtwvzUAlKklb",
+  "tags": []
+}

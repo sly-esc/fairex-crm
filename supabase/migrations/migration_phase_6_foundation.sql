@@ -18,7 +18,7 @@
 -- para permitir flexibilidad en el frontend y evitar actualizaciones masivas.
 CREATE TABLE IF NOT EXISTS company_modules (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id        BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     module_key        TEXT NOT NULL,
     is_active         BOOLEAN DEFAULT true,
     activated_at      TIMESTAMPTZ DEFAULT now(),
@@ -52,7 +52,7 @@ CREATE POLICY "company_modules_select_company" ON company_modules
 --    al cliente JS. El acceso es exclusivamente vía Server Actions (`service_role`).
 CREATE TABLE IF NOT EXISTS company_integrations (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id          BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_id          UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     provider            TEXT NOT NULL CHECK (provider IN ('meta', 'rack', 'shopify', 'woocommerce', 'microsip', 'manual', 'google', 'tiktok', 'stripe')), -- Proveedor maestro
     integration_key     TEXT NOT NULL,                           -- Identificador interno de FAIREX
     provider_account_id TEXT,                                    -- ID externo (ej. Facebook Page ID, WhatsApp Phone ID)
@@ -78,3 +78,22 @@ CREATE INDEX idx_company_integrations_provider ON company_integrations(provider)
 ALTER TABLE company_integrations ENABLE ROW LEVEL SECURITY;
 
 -- Nota de seguridad: La tabla carece intencionalmente de políticas para authenticated.
+
+-- ======================================================================================
+-- 1.3 Super Admin RBAC (Role-Based Access Control)
+-- ======================================================================================
+
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT false;
+
+-- ======================================================================================
+-- 1.4 Configuración Avanzada de IA (Runtime Blocks)
+-- ======================================================================================
+
+ALTER TABLE company_settings
+  ADD COLUMN IF NOT EXISTS ai_identity TEXT,
+  ADD COLUMN IF NOT EXISTS ai_business_rules TEXT,
+  ADD COLUMN IF NOT EXISTS ai_commercial_style TEXT,
+  ADD COLUMN IF NOT EXISTS ai_constraints TEXT,
+  ADD COLUMN IF NOT EXISTS ai_knowledge_sources JSONB DEFAULT '[]'::jsonb;
+
