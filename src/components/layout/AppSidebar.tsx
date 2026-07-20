@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, MessageSquare, Users, KanbanSquare, CheckSquare, Bell, Settings, Sparkles } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, Users, KanbanSquare, CheckSquare, Bell, Settings, Sparkles, Package } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { useAppStore } from '@/lib/store'
@@ -27,6 +27,7 @@ export function AppSidebar() {
     { name: 'Pipeline', href: '/pipeline', icon: KanbanSquare },
     { name: 'Tareas', href: '/tasks', icon: CheckSquare },
     { name: 'Alertas', href: '/notifications', icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : undefined },
+    { name: 'Inventario', href: '/inventory', icon: Package },
   ]
 
   return (
