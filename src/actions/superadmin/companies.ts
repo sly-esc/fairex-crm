@@ -1,6 +1,8 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
+import { requireSuperAdmin } from '@/lib/superadmin';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { isEncryptedCredentialsEnvelope } from '@/lib/integrations/encryption.server';
 import { Company, OnboardingData } from '@/types/superadmin';
 import { revalidatePath } from 'next/cache';
 
@@ -8,38 +10,20 @@ import { revalidatePath } from 'next/cache';
 export type ActionResponse<T> = { success: boolean; data?: T; error?: string };
 
 export async function createCompany(data: OnboardingData): Promise<ActionResponse<Company>> {
-  const supabase = await createClient();
-
-  // 1. Verificar si somos super admin
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: 'No autorizado' };
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_super_admin')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile?.is_super_admin) return { success: false, error: 'No tienes permisos de Super Admin' };
-
-  // 2. Insertar la empresa (bypasses RLS from server side with service_role if needed, 
-  // but for now relying on authenticated user and existing policies, or we might need a service_role client if RLS restricts inserts. 
-  // Wait, if we use the normal client, does the Super Admin have RLS to insert companies? 
-  // Let's assume yes or that companies table doesn't have restrictive RLS for inserts yet. 
-  // To be safe and act as a true BFF, we can use an elevated client if necessary. 
-  // For now, let's use the standard client.)
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
   
-  // TODO: We may need the service_role client to bypass RLS for super admin actions.
-  // Actually, let's use standard client. If it fails, we will adapt.
-  
-  const { data: newCompany, error: companyError } = await supabase
+  const adminClient = createAdminClient();
+
+  const { data: newCompany, error: companyError } = await adminClient
     .from('companies')
     .insert({
-      name: data.companyName,
+      nombre: data.companyName,
       slug: data.slug,
       industry: data.industry,
       plan: data.plan,
-      onboarding_status: 'admin_setup', // Avanzar al siguiente paso
+      estado: 'activa',
+      onboarding_status: 'in_progress',
     })
     .select()
     .single();
@@ -50,7 +34,7 @@ export async function createCompany(data: OnboardingData): Promise<ActionRespons
   }
 
   // Crear la configuración inicial de IA vacía/default
-  await supabase
+  await adminClient
     .from('company_settings')
     .insert({
       company_id: newCompany.id,
@@ -59,28 +43,46 @@ export async function createCompany(data: OnboardingData): Promise<ActionRespons
 
   revalidatePath('/superadmin/companies');
 
-  return { success: true, data: newCompany as Company };
+  const mappedCompany: Company = {
+    ...newCompany,
+    name: newCompany.nombre,
+    is_active: newCompany.estado === 'activa',
+  };
+
+  return { success: true, data: mappedCompany };
 }
 
 export async function listAllCompanies(): Promise<ActionResponse<Company[]>> {
-  const supabase = await createClient();
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
   
-  const { data, error } = await supabase
+  const adminClient = createAdminClient();
+  
+  const { data, error } = await adminClient
     .from('companies')
     .select('*')
     .order('created_at', { ascending: false });
 
   if (error) return { success: false, error: error.message };
 
-  return { success: true, data: data as Company[] };
+  const mappedData: Company[] = data.map((c: any) => ({
+    ...c,
+    name: c.nombre,
+    is_active: c.estado === 'activa',
+  }));
+
+  return { success: true, data: mappedData };
 }
 
 export async function updateCompanyStatus(id: string, is_active: boolean): Promise<ActionResponse<void>> {
-  const supabase = await createClient();
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
   
-  const { error } = await supabase
+  const adminClient = createAdminClient();
+  
+  const { error } = await adminClient
     .from('companies')
-    .update({ is_active })
+    .update({ estado: is_active ? 'activa' : 'inactiva' })
     .eq('id', id);
 
   if (error) return { success: false, error: error.message };
@@ -92,28 +94,74 @@ export async function updateCompanyStatus(id: string, is_active: boolean): Promi
 }
 
 export async function getCompanyDetail(id: string): Promise<ActionResponse<any>> {
-  const supabase = await createClient();
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
   
-  const { data, error } = await supabase
+  const adminClient = createAdminClient();
+  
+  // 1. Buscar empresa
+  const { data: company, error } = await adminClient
     .from('companies')
-    .select(`
-      *,
-      company_settings(*),
-      company_modules(*),
-      company_integrations(*)
-    `)
+    .select('*')
     .eq('id', id)
     .single();
 
-  if (error) return { success: false, error: error.message };
+  if (error) {
+    console.error(`[getCompanyDetail] Error fetching company id=${id}:`, JSON.stringify(error));
+    return { success: false, error: error.message };
+  }
 
-  return { success: true, data };
+  // 2. Buscar settings
+  const { data: settingsData } = await adminClient
+    .from('company_settings')
+    .select('*')
+    .eq('company_id', id);
+
+  // 3. Buscar módulos
+  const { data: modulesData } = await adminClient
+    .from('company_modules')
+    .select('*')
+    .eq('company_id', id);
+
+  // 4. Buscar integraciones (sin enviar credentials crudos al cliente)
+  const { data: integrationsData } = await adminClient
+    .from('company_integrations')
+    .select('id, company_id, provider, integration_key, provider_account_id, display_name, connection_type, is_active, status, config, last_sync_at, last_error, sync_frequency, created_at, updated_at, credentials')
+    .eq('company_id', id);
+
+  const safeIntegrations = (integrationsData || []).map((int: any) => {
+    const { credentials, ...rest } = int;
+    return {
+      ...rest,
+      has_credentials: isEncryptedCredentialsEnvelope(credentials)
+    };
+  });
+
+  const mappedData = {
+    ...company,
+    company_settings: settingsData || [],
+    company_modules: modulesData || [],
+    company_integrations: safeIntegrations,
+    name: company.nombre ?? company.name ?? '(Sin nombre)',
+    is_active: company.estado === 'activa',
+    phone: company.telefono ?? null,
+  };
+
+  return { success: true, data: mappedData };
 }
 
 export async function updateOnboardingStatus(id: string, status: string): Promise<ActionResponse<void>> {
-  const supabase = await createClient();
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
   
-  const { error } = await supabase
+  const validStatuses = ['pending', 'in_progress', 'completed', 'suspended'];
+  if (!validStatuses.includes(status)) {
+    return { success: false, error: 'Estado de onboarding no válido' };
+  }
+  
+  const adminClient = createAdminClient();
+  
+  const { error } = await adminClient
     .from('companies')
     .update({ 
       onboarding_status: status,
@@ -124,5 +172,39 @@ export async function updateOnboardingStatus(id: string, status: string): Promis
   if (error) return { success: false, error: error.message };
   
   revalidatePath(`/superadmin/companies/${id}`);
+  return { success: true, data: undefined };
+}
+
+export async function skipCSVAndFinishOnboarding(companyId: number): Promise<ActionResponse<void>> {
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
+
+  if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+    return { success: false, error: 'companyId inválido' };
+  }
+
+  const adminClient = createAdminClient();
+
+  const { data: company, error: checkError } = await adminClient
+    .from('companies')
+    .select('id')
+    .eq('id', companyId)
+    .single();
+
+  if (checkError || !company) {
+    return { success: false, error: 'La empresa especificada no existe' };
+  }
+
+  const { error } = await adminClient
+    .from('companies')
+    .update({ 
+      onboarding_status: 'completed',
+      onboarding_completed_at: new Date().toISOString()
+    })
+    .eq('id', companyId);
+
+  if (error) return { success: false, error: error.message };
+
+  revalidatePath(`/superadmin/companies/${companyId}`);
   return { success: true, data: undefined };
 }

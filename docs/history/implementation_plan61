@@ -1,0 +1,358 @@
+# Plan Técnico — Corrección Integral Paso 5: Integraciones
+
+## Estado confirmado del código actual
+
+Revisé todos los archivos involucrados. No hubo cambios previos aplicados al Paso 5. El estado que describe la auditoría anterior sigue siendo exacto.
+
+---
+
+## 1. Flujo Seguro Propuesto: Alta, Actualización y Eliminación
+
+```
+SuperAdmin UI (Browser)
+  │
+  ├─ Alta (integración nueva):
+  │   integrationKey + provider_account_id + secreto_nuevo
+  │   → Server Action saveIntegration()
+  │     → requireSuperAdmin()
+  │     → validar formato server-side (no email en ID)
+  │     → buscar por (company_id, integration_key)
+  │     → NO encontrado → encryptCredentials(secreto_nuevo) → INSERT
+  │     → Encontrado     → encryptCredentials(secreto_nuevo) → UPDATE misma fila
+  │
+  ├─ Actualización (corregir ID o secreto):
+  │   secreto vacío = conservar credencial existente (no descifrar, no tocar)
+  │   secreto con valor = cifrar y reemplazar
+  │
+  └─ Eliminación:
+      acción explícita separada deleteIntegration(id, company_id)
+      (ya existe, solo necesita pasar a adminClient)
+
+Retorno al Browser:
+  NUNCA devuelve credentials, ciphertext, iv, authTag, ni llaves.
+  Devuelve solo metadata segura + has_credentials: boolean
+```
+
+---
+
+## 2. Archivos Exactos Involucrados
+
+| Archivo | Acción |
+|---|---|
+| `src/lib/integrations/encryption.server.ts` | **NUEVO** — helper server-only AES-256-GCM |
+| `src/actions/superadmin/integrations.ts` | **MODIFICAR** — adminClient, lookup por integration_key, cifrado |
+| `src/actions/superadmin/companies.ts` | **MODIFICAR** — filtrar credentials de getCompanyDetail |
+| `src/app/(superadmin)/superadmin/onboarding/OnboardingWizard.tsx` | **MODIFICAR** — anti-autofill, has_credentials, "Configurar después", validaciones |
+| `src/types/superadmin.ts` | **MODIFICAR** — agregar `has_credentials: boolean` a CompanyIntegration |
+| `supabase/migrations/migration_phase_11_integrations_key_unique.sql` | **NUEVO (pendiente de aprobación)** — constraint UNIQUE(company_id, integration_key) |
+
+---
+
+## 3. Diff Conceptual por Archivo
+
+### 3a. [NUEVO] `src/lib/integrations/encryption.server.ts`
+
+Este archivo solo puede importarse desde Server Actions. El nombre `.server.ts` es una convención de Next.js que Next.js 16 / Turbopack respeta para excluir del bundle del cliente.
+
+```diff
++ // Formato versionado del sobre cifrado:
++ // {
++ //   "v": 1,
++ //   "alg": "aes-256-gcm",
++ //   "iv": "<hex>",
++ //   "tag": "<hex>",
++ //   "ct": "<hex>"
++ // }
++
++ // NUNCA llamar a getEncryptionKey() desde Client Components.
++ // Next.js lanzará un error si se intenta importar crypto desde el cliente.
++ function getEncryptionKey(): Buffer {
++   const raw = process.env.INTEGRATIONS_ENCRYPTION_KEY;
++   if (!raw) throw new Error('INTEGRATIONS_ENCRYPTION_KEY no configurada');
++   const buf = Buffer.from(raw, 'hex');
++   if (buf.length !== 32)
++     throw new Error('INTEGRATIONS_ENCRYPTION_KEY debe ser exactamente 32 bytes (64 hex chars)');
++   return buf;
++ }
++
++ export function encryptCredentials(plainObj: Record<string, string>): Record<string, unknown> {
++   // IV aleatorio de 12 bytes por cada llamada
++   // AES-256-GCM produce un authTag de 16 bytes
++   // Devuelve sobre cifrado, nunca el plaintext
++ }
++
++ export function decryptCredentials(envelope: Record<string, unknown>): Record<string, string> {
++   // Valida versión y algoritmo antes de descifrar
++   // Errores genéricos — no exponen el ciphertext
++ }
++
++ export function hasEncryptedCredentials(envelope: unknown): boolean {
++   // Comprueba si el campo credentials ya contiene un sobre cifrado v1
++   // Útil para saber si una integración existente tiene credenciales
++ }
+```
+
+> [!IMPORTANT]
+> **Cómo generar la llave correctamente (sin mostrar una llave real):**
+> Ejecutar en Node.js en local una sola vez:
+> ```
+> node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+> ```
+> Copiar el resultado como valor de `INTEGRATIONS_ENCRYPTION_KEY` en `.env.local`.
+> Esta variable NUNCA debe tener prefijo `NEXT_PUBLIC_`.
+
+> [!IMPORTANT]
+> **Cómo se impide la importación desde Client Components:**
+> El archivo `.server.ts` importa `node:crypto` directamente. Si algún Client Component intenta importarlo, el build falla con un error claro. Adicionalmente, agregaremos `import 'server-only';` al inicio del archivo (paquete nativo de Next.js).
+
+> [!NOTE]
+> **Credenciales antiguas en texto plano:** Si en `company_integrations.credentials` ya existiera un objeto sin campo `v` (el campo de versión), `hasEncryptedCredentials()` devolverá `false` y el sistema tratará al secreto como "no configurado" (equivalente a campo vacío). La integración existirá pero la credencial requerirá ser re-ingresada. No hay migración de datos necesaria porque producción aún no tiene integraciones guardadas.
+
+---
+
+### 3b. [MODIFICAR] `src/actions/superadmin/integrations.ts`
+
+```diff
+- import { createClient } from '@/lib/supabase/server';
++ import { createAdminClient } from '@/lib/supabase/admin';
++ import { encryptCredentials, hasEncryptedCredentials } from '@/lib/integrations/encryption.server';
+
+  export async function saveIntegration(
+    company_id: string,
+    provider: CompanyIntegration['provider'],
+    integration_key: string,
+    provider_account_id: string,
+-   credentials: Record<string, any>,
++   rawCredentials: Record<string, string>,  // vacío = conservar existente
+    config: Record<string, any> = {},
+    display_name: string = ''
+  ) {
+    const auth = await requireSuperAdmin();
+    if (!auth.success) return { success: false, error: auth.error };
+-   const { supabase } = auth;
++   const adminClient = createAdminClient();
+
++   // Validación server-side: no aceptar emails donde van IDs numéricos
++   if (provider_account_id && provider_account_id.includes('@')) {
++     return { success: false, error: 'provider_account_id no puede ser un correo electrónico' };
++   }
+
++   // Buscar por (company_id, integration_key) — NO por provider_account_id
++   const { data: existing } = await adminClient
++     .from('company_integrations')
++     .select('id, credentials')
++     .eq('company_id', company_id)
++     .eq('integration_key', integration_key)
++     .maybeSingle();
+
++   // Resolver qué credencial guardar
++   let credentialsToSave: Record<string, unknown>;
++   const hasNewSecret = Object.values(rawCredentials).some(v => v.trim() !== '');
++   if (hasNewSecret) {
++     credentialsToSave = encryptCredentials(rawCredentials);
++   } else if (existing?.credentials) {
++     credentialsToSave = existing.credentials; // conservar cifrado existente
++   } else {
++     credentialsToSave = {};
++   }
+
+-   const { error } = await supabase
+-     .from('company_integrations')
+-     .upsert({ ... }, { onConflict: 'company_id, provider, provider_account_id' });
++   if (existing) {
++     // UPDATE — misma fila, nunca duplicar
++     await adminClient.from('company_integrations')
++       .update({ provider_account_id, display_name, credentials: credentialsToSave, config,
++                 is_active: true, status: 'connected', updated_at: new Date().toISOString() })
++       .eq('id', existing.id);
++   } else {
++     // INSERT — primera vez
++     await adminClient.from('company_integrations')
++       .insert({ company_id, provider, integration_key, provider_account_id,
++                 display_name, credentials: credentialsToSave, config,
++                 is_active: true, status: 'connected' });
++   }
+  }
+```
+
+También corregir `listIntegrations` y `deleteIntegration` para usar `createAdminClient()`.
+
+---
+
+### 3c. [MODIFICAR] `src/actions/superadmin/companies.ts` — `getCompanyDetail`
+
+```diff
+  // 4. Buscar integraciones
+  const { data: integrationsData } = await adminClient
+    .from('company_integrations')
+-   .select('*')
++   .select('id, company_id, provider, integration_key, provider_account_id, display_name, connection_type, is_active, status, config, last_sync_at, last_error, sync_frequency, created_at, updated_at, credentials')
+    .eq('company_id', id);
+
++ // Mapear: nunca enviar credentials al cliente, solo un booleano
++ const safeIntegrations = (integrationsData || []).map((int: any) => {
++   const { credentials, ...rest } = int;
++   return {
++     ...rest,
++     has_credentials: hasEncryptedCredentials(credentials),
++   };
++ });
+
+  const mappedData = {
+    ...
+-   company_integrations: integrationsData || [],
++   company_integrations: safeIntegrations,
+  };
+```
+
+---
+
+### 3d. [MODIFICAR] `src/types/superadmin.ts`
+
+```diff
+  export interface CompanyIntegration {
+    ...
++   has_credentials: boolean;   // booleano seguro, sin exponer el secreto
+    // credentials are intentionally omitted from types sent to the client
+  }
+```
+
+---
+
+### 3e. [MODIFICAR] `OnboardingWizard.tsx`
+
+**Anti-autofill en inputs:**
+```diff
+  <input
+    type="text"
+    value={integrations.whatsapp_id}
++   autoComplete="off"
++   spellCheck={false}
++   autoCapitalize="none"
++   autoCorrect="off"
+  />
+  <input
+    type="password"
+    value={integrations.whatsapp_token}
++   autoComplete="new-password"
++   spellCheck={false}
+  />
+```
+
+**Precarga de IDs (sin secretos):** en `useEffect`, el bloque de precarga de integraciones debe cargar solo los IDs públicos (`provider_account_id`) y mostrar un indicador visual si `has_credentials === true`. Los campos de token/secret quedarán vacíos.
+
+```diff
+  data.company_integrations.forEach((int: any) => {
+    if (int.integration_key === 'whatsapp_official') {
+      loadedIntegrations.whatsapp_id = int.provider_account_id || '';
+-     loadedIntegrations.whatsapp_token = int.credentials?.whatsapp_token || '';
++     // whatsapp_token queda vacío; se muestra has_credentials en UI
+    }
+    if (int.integration_key === 'facebook_page') {
+      loadedIntegrations.facebook_page_id = int.provider_account_id || '';
+-     loadedIntegrations.facebook_token = int.credentials?.facebook_token || '';
+    }
+  });
+```
+
+**Botón "Configurar después":**
+```diff
++ <button onClick={() => setCurrentStep(6)} disabled={isProcessing}
++   className="...secondary...">
++   Configurar después
++ </button>
+  <button onClick={handleStep5Submit} disabled={isProcessing}>
+    Guardar integraciones y continuar
+  </button>
+```
+
+**Validación antes de guardar:**
+```diff
+  const handleStep5Submit = async () => {
++   // Validar que ningún ID sea un correo electrónico
++   if (integrations.whatsapp_id.includes('@')) {
++     setError('WhatsApp Phone Number ID no puede ser un correo electrónico');
++     return;
++   }
++   if (integrations.facebook_page_id.includes('@')) {
++     setError('Facebook Page ID no puede ser un correo electrónico');
++     return;
++   }
+```
+
+---
+
+## 4. Estrategia de Cifrado
+
+| Característica | Implementación |
+|---|---|
+| Algoritmo | AES-256-GCM |
+| IV | 12 bytes aleatorios por cada llamada a `encryptCredentials()` |
+| Auth Tag | 16 bytes, incluido en el sobre |
+| Llave | 32 bytes desde `INTEGRATIONS_ENCRYPTION_KEY` (hex, 64 caracteres) |
+| Formato sobre | `{ v, alg, iv, tag, ct }` (todo en hex) |
+| Runtime | Solo Node.js server-side (`node:crypto`) |
+| Guardia | `import 'server-only';` al inicio del archivo |
+| Errores | Mensajes genéricos sin exponer valores cifrados o llaves |
+| Rotación | El campo `v` (versión) permite migrar el algoritmo sin romper datos existentes |
+
+---
+
+## 5. Estrategia Anti-Duplicados
+
+El constraint actual es `UNIQUE(company_id, provider, provider_account_id)`. Esto permite duplicados si cambia el `provider_account_id`.
+
+La corrección en `saveIntegration` hace que el lookup sea **por `integration_key`**, no por el constraint de la DB. Así que el comportamiento correcto de no-duplicar se logra a nivel de código inmediatamente.
+
+La migración propuesta agrega el constraint en base de datos como defensa en profundidad:
+
+```sql
+-- migration_phase_11_integrations_key_unique.sql
+ALTER TABLE public.company_integrations
+  ADD CONSTRAINT IF NOT EXISTS unique_company_integration_key
+  UNIQUE (company_id, integration_key);
+```
+
+> [!IMPORTANT]
+> Antes de crear este constraint debes ejecutar la consulta de auditoría abajo y confirmar que no hay duplicados de `(company_id, integration_key)` en producción. Si los hay, el `ADD CONSTRAINT` fallará.
+
+---
+
+## 6. Consulta SQL de Auditoría Segura
+
+Ejecuta esta consulta en Supabase SQL Editor para revisar el estado de integraciones sin exponer secretos:
+
+```sql
+SELECT
+  id,
+  company_id,
+  provider,
+  integration_key,
+  provider_account_id,
+  display_name,
+  status,
+  is_active,
+  created_at,
+  updated_at,
+  (credentials IS NOT NULL AND credentials != '{}'::jsonb) AS has_credentials
+FROM public.company_integrations
+ORDER BY company_id, integration_key;
+```
+
+Esta consulta no devuelve el contenido de `credentials`, solo un booleano indicando si tiene datos.
+
+---
+
+## 7. ¿Hace falta una nueva migración?
+
+**Sí, una migración es necesaria pero no urgente para desbloquear el flujo.**
+
+- La corrección del código TypeScript (lookup por `integration_key`) ya resuelve los duplicados a nivel de aplicación.
+- La migración `migration_phase_11_integrations_key_unique.sql` con el constraint `UNIQUE(company_id, integration_key)` añade protección de integridad en base de datos.
+- **No la crearé ni ejecutaré hasta que revises los resultados de la consulta de auditoría** y confirmes que no hay duplicados existentes en producción.
+
+---
+
+## User Review Required
+
+Por favor revisa este plan y dime si apruebas avanzar con la implementación. Como paso previo, ejecuta la consulta SQL de auditoría y comparte el resultado (sin credenciales) para que podamos decidir sobre la migración del constraint.

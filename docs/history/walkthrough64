@@ -1,0 +1,57 @@
+# Resumen — Implementación del Paso 5 (Integraciones)
+
+## Cambios Realizados
+
+1. **Cifrado Server-Only Implementado:**
+   - [NEW] [encryption.server.ts](file:///C:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/lib/integrations/encryption.server.ts) 
+   - Se añadió la envoltura en AES-256-GCM para el guardado seguro de credenciales usando Node `crypto`.
+   - Incluye validador fuerte `isEncryptedCredentialsEnvelope` que asegura no dar por buenas credenciales nulas o en texto plano.
+
+2. **Tipado Seguro:**
+   - [MODIFY] [superadmin.ts](file:///C:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/types/superadmin.ts)
+   - Eliminado por completo el uso de `credentials` en los tipos que viajan al cliente.
+   - `company_id` validado tipográficamente como `number` (reflejando BIGINT).
+   - Añadido `has_credentials: boolean`.
+
+3. **Acciones Seguras (Server Actions):**
+   - [MODIFY] [integrations.ts](file:///C:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/actions/superadmin/integrations.ts)
+   - Centralización de `INTEGRATION_ALLOWLIST`. Todas las inserciones derivan de esta lista, ignorando la data inyectada desde el navegador.
+   - Upsert atómico asegurado con `onConflict: 'company_id,integration_key'` (dependiente de Fase 11).
+   - Añadida `disconnectIntegration` a nivel servidor con lógica de borrado lógico (Soft Delete).
+   - [MODIFY] [companies.ts](file:///C:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/actions/superadmin/companies.ts)
+   - Corrección crítica de fuga de memoria: `getCompanyDetail` ahora extrae los cifrados, calcula `has_credentials` y quita las llaves del objeto enviado al cliente.
+
+4. **UI Reforzada (OnboardingWizard):**
+   - [MODIFY] [OnboardingWizard.tsx](file:///C:/Users/admin/Desktop/FAIREX-AI-BUSINESS-OS/src/app/(superadmin)/superadmin/onboarding/OnboardingWizard.tsx)
+   - Atributos `autoComplete="new-password"`, `spellCheck={false}`, `autoCapitalize="none"`, y `autoCorrect="off"` para evitar el relleno automático (autofill) de Chrome con las contraseñas del administrador.
+   - Rediseño de estados en React para acomodar indicadores visuales de "Configurada" para integraciones que ya cuenten con `has_credentials` verdadero.
+   - Validación local estricta que previene la llamada al action de servidor en caso de que todas las tarjetas se encuentren vacías.
+
+## Validación
+
+- **TypeScript / Build**: Se ejecutó `npm run build` confirmando que Next.js Turbopack genera estáticos y que TypeScript transpiló y verificó las nuevas firmas sin errores.
+- **SQL (Fase 11)**: El nuevo constraint único en la DB (`uq_company_integration_key`) garantiza integridad antes de ejecutar el upsert.
+
+## Siguientes Pasos (Acción Requerida)
+
+> [!IMPORTANT]
+> El sistema criptográfico está diseñado para **fallar de forma segura (Fail-safe)**. Si la llave de cifrado no existe en el entorno, lanzará un error y detendrá cualquier intento de guardar credenciales. No hay llaves por defecto.
+
+Antes de probar el flujo, debes generar tu llave criptográfica (32 bytes / 64 caracteres en formato hexadecimal) y agregarla a tu archivo local.
+
+1. Abre tu terminal y ejecuta el siguiente comando para generar una llave criptográficamente segura:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
+2. Copia la cadena hexadecimal generada.
+
+3. Abre el archivo `.env.local` en la raíz de tu proyecto y añade la variable exactamente así:
+   ```env
+   INTEGRATIONS_ENCRYPTION_KEY="<tu_llave_pegada_aqui>"
+   ```
+   *(Nota: Asegúrate de NO usar el prefijo `NEXT_PUBLIC_` para evitar que la llave se exponga al frontend).*
+
+Una vez agregada la llave, el servidor de Next.js la recogerá mediante `process.env.INTEGRATIONS_ENCRYPTION_KEY` de forma segura.
+
+El sistema de integraciones ahora es atómico, seguro por defecto, resistente a extensiones del cliente y no fugará secretos. Todo listo para avanzar.

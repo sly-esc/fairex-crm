@@ -2,23 +2,16 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient } from '@/lib/supabase/server';
+import { requireSuperAdmin } from '@/lib/superadmin';
 
 export type ActionResponse<T> = { success: boolean; data?: T; error?: string };
 
 export async function inviteAdminUser(company_id: string, email: string): Promise<ActionResponse<any>> {
-  const supabase = await createClient();
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
+  const { supabase } = auth;
 
-  // 1. Verificar si somos super admin
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: 'No autorizado' };
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_super_admin')
-    .eq('id', user.id)
-    .single();
-
-  if (!profile?.is_super_admin) return { success: false, error: 'No tienes permisos de Super Admin' };
 
   // 2. Invitar al usuario usando Service Role
   const adminAuthClient = createAdminClient();

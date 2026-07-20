@@ -1,0 +1,223 @@
+# Plan Técnico Definitivo (Revisado) — Paso 5: Integraciones
+
+Todas las reglas estrictas han sido incorporadas al diseño. La filosofía base es **cero confianza en el cliente**: el frontend solo envía identificadores lógicos y valores crudos, y el servidor deriva todos los metadatos y aplica la validación.
+
+---
+
+## 1. Archivo SQL de la Fase 11 (Listo para ejecutar)
+
+Ruta del archivo a crear: `supabase/migrations/migration_phase_11_integrations_key_unique.sql`
+
+```sql
+-- ======================================================================================
+-- MIGRACIÓN FASE 11: UNIQUE(company_id, integration_key) en company_integrations
+-- ======================================================================================
+-- Objetivo: Garantizar que cada empresa tenga como máximo una configuración
+--           por canal lógico (integration_key), sin importar cuántas veces cambie
+--           el provider_account_id. Resuelve la estrategia de upsert atómico.
+--
+-- REGLAS INAMOVIBLES:
+-- 1. Solo ADD CONSTRAINT mediante bloque DO — NUNCA ALTER COLUMN ni DROP.
+-- 2. Aborta con mensaje claro si existen duplicados previos.
+-- 3. No elimina el constraint histórico: UNIQUE(company_id, provider, provider_account_id).
+-- 4. Idempotente: puede ejecutarse N veces sin errores si el constraint ya existe.
+-- 5. No cambia tipos ni elimina columnas.
+-- ======================================================================================
+
+DO $$
+BEGIN
+
+  -- ──────────────────────────────────────────────────────────────────────────────────────
+  -- PASO 1: Verificar ausencia de duplicados (company_id, integration_key)
+  -- Si los hay, abortar con mensaje explicativo antes de intentar ADD CONSTRAINT.
+  -- ──────────────────────────────────────────────────────────────────────────────────────
+  IF EXISTS (
+    SELECT company_id, integration_key
+    FROM   public.company_integrations
+    GROUP  BY company_id, integration_key
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION
+      'FAIREX ERROR: Existen filas duplicadas en public.company_integrations '
+      'por (company_id, integration_key). Limpia los duplicados antes de ejecutar '
+      'esta migración.';
+  END IF;
+
+  -- ──────────────────────────────────────────────────────────────────────────────────────
+  -- PASO 2: Agregar constraint UNIQUE solo si no existe todavía
+  -- Se consulta pg_constraint para garantizar idempotencia completa.
+  -- ──────────────────────────────────────────────────────────────────────────────────────
+  IF NOT EXISTS (
+    SELECT 1
+    FROM   pg_constraint c
+    JOIN   pg_class      t ON t.oid = c.conrelid
+    JOIN   pg_namespace  n ON n.oid = t.relnamespace
+    WHERE  n.nspname = 'public'
+      AND  t.relname = 'company_integrations'
+      AND  c.conname = 'uq_company_integration_key'
+      AND  c.contype = 'u'
+  ) THEN
+    ALTER TABLE public.company_integrations
+      ADD CONSTRAINT uq_company_integration_key
+      UNIQUE (company_id, integration_key);
+  END IF;
+
+END $$;
+
+-- Recargar schema de PostgREST para que el constraint sea visible inmediatamente
+NOTIFY pgrst, 'reload schema';
+```
+
+---
+
+## 2. Tipo Seguro de TS sin Credentials
+
+Archivo: `src/types/superadmin.ts`
+
+```typescript
+export interface CompanyIntegration {
+  id: string;
+  company_id: string; // Aunque en DB sea int8, Supabase JS mapea BIGINT a string a menos que se fuerce, pero ajustaremos a number en las funciones.
+  provider: 'meta' | 'rack' | 'shopify' | 'woocommerce' | 'microsip' | 'manual' | 'google' | 'tiktok' | 'stripe';
+  integration_key: string;
+  provider_account_id: string | null;
+  display_name: string | null;
+  connection_type: 'oauth' | 'api_key' | 'webhook' | 'manual';
+  is_active: boolean;
+  status: 'connected' | 'disconnected' | 'error';
+  config: Record<string, any>;
+  last_sync_at: string | null;
+  last_error: string | null;
+  sync_frequency: string;
+  created_at: string;
+  updated_at: string;
+  has_credentials: boolean; // Único indicador seguro
+  // credentials: Se elimina por completo del tipo base exportado al cliente.
+}
+```
+
+---
+
+## 3. Allowlist Server-Side Estricta
+
+(Solo permite `api_key` porque Fase 6 tiene el `CHECK (connection_type IN ('oauth', 'api_key', 'webhook', 'manual'))`).
+
+```typescript
+export type WizardIntegrationKey = 'whatsapp_official' | 'facebook_page' | 'rack_erp';
+
+export const INTEGRATION_ALLOWLIST: Record<WizardIntegrationKey, {
+  provider: 'meta' | 'rack';
+  displayName: string;
+  connectionType: 'api_key';
+  credentialKey: string;
+  requiresAccountId: boolean;
+}> = {
+  whatsapp_official: {
+    provider: 'meta',
+    displayName: 'Meta: WhatsApp Business',
+    connectionType: 'api_key',
+    credentialKey: 'token',
+    requiresAccountId: true,
+  },
+  facebook_page: {
+    provider: 'meta',
+    displayName: 'Meta: Facebook Page',
+    connectionType: 'api_key',
+    credentialKey: 'token',
+    requiresAccountId: true,
+  },
+  rack_erp: {
+    provider: 'rack',
+    displayName: 'Rack ERP',
+    connectionType: 'api_key',
+    credentialKey: 'api_key',
+    requiresAccountId: false,
+  }
+};
+```
+
+---
+
+## 4. Firma y Lógica de `saveIntegration`
+
+```typescript
+export async function saveIntegration(
+  companyId: number,
+  integrationKey: WizardIntegrationKey,
+  providerAccountId: string,
+  rawSecret: string
+): Promise<ActionResponse<void>>
+```
+
+**Flujo atómico y seguro:**
+1. Validar `Number.isSafeInteger(companyId) && companyId > 0`.
+2. Extraer configuración desde `INTEGRATION_ALLOWLIST[integrationKey]`. Si no existe, error.
+3. Normalizar: `const accountId = providerAccountId.trim();`, `const secret = rawSecret.trim();`
+4. Validaciones de cuenta:
+   - Si `requiresAccountId && !accountId` → Error: ID requerido.
+   - Si `provider === 'meta' && accountId.includes('@')` → Error: ID de Meta no puede contener @.
+   - Si `accountId.length > 256` o `secret.length > 2048` → Error de longitud.
+5. `requireSuperAdmin()` y buscar integración previa (`id, credentials`) usando `createAdminClient()`.
+6. Resolver credenciales a guardar:
+   - **Caso A (Nueva)**: `!existing`. Si `!secret`, arroja error ("Secreto es obligatorio para nueva integración"). Si ok, `encryptCredentials({ [credentialKey]: secret })`.
+   - **Caso B (Edición, secreto intacto)**: `existing && !secret`. Conserva `existing.credentials`.
+   - **Caso C (Edición, secreto nuevo)**: `existing && secret`. `encryptCredentials({ [credentialKey]: secret })`.
+7. Ejecutar **Upsert atómico** con `onConflict: 'company_id,integration_key'`:
+   ```typescript
+   adminClient.from('company_integrations').upsert({
+     company_id: companyId,
+     integration_key: integrationKey,
+     provider: allowlist.provider,
+     display_name: allowlist.displayName,
+     connection_type: allowlist.connectionType,
+     provider_account_id: accountId || null,
+     credentials: resolvedCredentials,
+     config: {}, // Hardcodeado desde servidor en esta fase
+     is_active: true,
+     status: 'connected',
+     updated_at: new Date().toISOString()
+   }, { onConflict: 'company_id,integration_key' })
+   ```
+8. Verificar y devolver error en caso de fallo en Supabase.
+
+---
+
+## 5. Flujo Exacto de UI (Paso 5)
+
+Si el usuario pulsa **"Guardar integraciones y continuar"**:
+- **Escenario 1 (Todo vacío)**: El Wizard no envía nada a `saveIntegration`. Muestra un error local: *"No has llenado ninguna integración. Configura al menos una o usa 'Configurar después'."*
+- **Escenario 2 (Datos incompletos en una tarjeta)**: Por ejemplo, llenó Page ID pero no Token en una nueva. `saveIntegration` es invocado, falla en servidor y devuelve error de validación. La UI muestra el error y frena.
+- **Escenario 3 (Todo correcto)**: Envía individualmente a `saveIntegration` solo las tarjetas que tienen datos (ID o Token) y avanza.
+
+Si el usuario pulsa **"Configurar después"**:
+- Avanza instantáneamente al Paso 6. No se crea ninguna fila vacía en la base de datos.
+- Si recarga el Wizard, y no se ha avanzado más allá del Paso 6, volverá al Paso 5 (hasta que persistas explícitamente un indicador en el futuro).
+
+---
+
+## 6. Validación de `has_credentials` segura
+
+En `src/lib/integrations/encryption.server.ts`:
+```typescript
+export function isEncryptedCredentialsEnvelope(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const env = value as Record<string, unknown>;
+  return (
+    env.v === 1 &&
+    env.alg === 'aes-256-gcm' &&
+    typeof env.iv === 'string' && env.iv.length > 0 &&
+    typeof env.tag === 'string' && env.tag.length > 0 &&
+    typeof env.ct === 'string' && env.ct.length > 0
+  );
+}
+```
+En `getCompanyDetail`, se usarán columnas explícitas omitiendo `credentials` del mapeo final que se envía al cliente, reemplazándolo exclusivamente por `has_credentials`.
+
+---
+
+## 7. Desconexión (Soft Delete)
+
+`disconnectIntegration` se implementará como Server Action (sin exponerse en UI):
+- Filtra por `id` y `companyId`.
+- Establece `credentials = null, is_active = false, status = 'disconnected'`.
+- Conserva el `provider_account_id` para trazabilidad de auditoría.

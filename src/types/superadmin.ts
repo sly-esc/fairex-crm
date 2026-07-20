@@ -1,4 +1,5 @@
 export type PlanType = 'starter' | 'pro' | 'enterprise';
+export type WizardIntegrationKey = 'whatsapp_official' | 'facebook_page' | 'rack_erp';
 
 export interface Company {
   id: string;
@@ -27,7 +28,7 @@ export interface CompanyModule {
 
 export interface CompanyIntegration {
   id: string;
-  company_id: string;
+  company_id: number;
   provider: 'meta' | 'rack' | 'shopify' | 'woocommerce' | 'microsip' | 'manual' | 'google' | 'tiktok' | 'stripe';
   integration_key: string;
   provider_account_id: string | null;
@@ -41,7 +42,7 @@ export interface CompanyIntegration {
   sync_frequency: string;
   created_at: string;
   updated_at: string;
-  // credentials are intentionally omitted from types sent to the client
+  has_credentials: boolean;
 }
 
 export interface AiConfig {

@@ -1,19 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { requireSuperAdmin } from '@/lib/superadmin';
 import { ImportResult, ProductInsert } from '@/types/superadmin';
 import Papa from 'papaparse';
+
+// Aliases for the unique identifier field → maps to internal key 'sku'
+const SKU_ALIASES = [
+  'sku', 'código', 'codigo', 'clave', 'id_producto', 'producto_id',
+  'vin', 'lote', 'stock_number', 'numero_lote', 'número_lote',
+  'numero_de_lote', 'número_de_lote'
+];
+
+// Aliases for the display name field → maps to internal key 'name'
+const NAME_ALIASES = [
+  'nombre', 'name', 'producto', 'titulo', 'título', 'descripcion',
+  'descripción', 'modelo'
+];
 
 // Helper to normalize headers
 function normalizeHeader(header: string): string {
   const lower = header.toLowerCase().trim();
-  if (['nombre', 'name'].includes(lower)) return 'name';
-  if (['descripcion', 'description'].includes(lower)) return 'description';
-  if (['precio', 'price'].includes(lower)) return 'price';
-  if (['costo', 'precio_costo', 'cost_price'].includes(lower)) return 'cost_price';
-  if (['stock_minimo', 'min_stock'].includes(lower)) return 'min_stock';
-  if (['unidad', 'unit'].includes(lower)) return 'unit';
-  if (['categoria', 'category'].includes(lower)) return 'category';
-  if (['imagen_url', 'image_url'].includes(lower)) return 'image_url';
+  if (SKU_ALIASES.includes(lower)) return 'sku';
+  if (NAME_ALIASES.includes(lower)) return 'name';
+  if (['descripcion_larga', 'description', 'detalle'].includes(lower)) return 'description';
+  if (['precio', 'price', 'precio_venta'].includes(lower)) return 'price';
+  if (['costo', 'precio_costo', 'cost_price', 'precio_de_costo'].includes(lower)) return 'cost_price';
+  if (['stock_minimo', 'min_stock', 'stock_mínimo'].includes(lower)) return 'min_stock';
+  if (['unidad', 'unit', 'unidad_de_medida'].includes(lower)) return 'unit';
+  if (['categoria', 'categoría', 'category'].includes(lower)) return 'category';
+  if (['imagen_url', 'image_url', 'imagen', 'foto'].includes(lower)) return 'image_url';
   return lower;
 }
 
@@ -28,21 +44,11 @@ function parseNumeric(val: any): number | null {
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = await createClient();
-
-    // 1. Verify Super Admin (Server-side)
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('is_super_admin')
-      .eq('auth_user_id', user.id)
-      .single();
-
-    if (!profile?.is_super_admin) {
-      return NextResponse.json({ error: 'No tienes permisos de Super Admin' }, { status: 403 });
+    const auth = await requireSuperAdmin();
+    if (!auth.success) {
+      return NextResponse.json({ error: auth.error }, { status: 403 });
     }
+    const { supabase } = auth;
 
     // 2. Form Data Validation
     const formData = await req.formData();
@@ -52,14 +58,28 @@ export async function POST(req: NextRequest) {
     if (!file || !companyIdStr) {
       return NextResponse.json({ error: 'Falta el archivo o el company_id' }, { status: 400 });
     }
+    
+    const modeRaw = (formData.get('mode') as string | null) || 'onboarding';
+    const VALID_MODES = ['onboarding', 'update_inventory'] as const;
+    type ImportMode = typeof VALID_MODES[number];
+    if (!(VALID_MODES as readonly string[]).includes(modeRaw)) {
+      return NextResponse.json({ error: `Modo de importación no válido: '${modeRaw}'. Valores permitidos: onboarding, update_inventory` }, { status: 400 });
+    }
+    const mode = modeRaw as ImportMode;
+    
+    if (file.size > 5 * 1024 * 1024) {
+      return NextResponse.json({ error: 'El archivo supera el tamaño máximo permitido (5 MB)' }, { status: 400 });
+    }
 
     const company_id = parseInt(companyIdStr, 10);
     if (isNaN(company_id) || company_id <= 0) {
       return NextResponse.json({ error: 'El company_id debe ser un número positivo' }, { status: 400 });
     }
+    
+    const adminClient = createAdminClient();
 
     // Verify company exists
-    const { data: company, error: companyError } = await supabase
+    const { data: company, error: companyError } = await adminClient
       .from('companies')
       .select('id')
       .eq('id', company_id)
@@ -70,25 +90,51 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Parse CSV with PapaParse
+    // Autodetect delimiter (comma or semicolon) by sniffing the first line
     const text = await file.text();
+    const firstLine = text.split(/\r?\n/)[0] || '';
+    const delimiter = firstLine.includes(';') && !firstLine.includes(',') ? ';' : ',';
     
     const parseResult = Papa.parse(text, {
       header: true,
       skipEmptyLines: true,
+      delimiter,
       transformHeader: normalizeHeader
     });
 
-    if (parseResult.errors.length > 0) {
-      return NextResponse.json({ 
-        error: 'Error al parsear el CSV', 
-        details: parseResult.errors 
+    // Only abort on truly critical PapaParse errors (e.g. undetectable structure).
+    // PapaParse sometimes emits non-critical warnings; filter to actual errors.
+    const criticalParseErrors = parseResult.errors.filter(
+      (e: any) => e.type === 'Delimiter' || e.type === 'FieldMismatch'
+    );
+    if (criticalParseErrors.length > 0) {
+      const detail = criticalParseErrors.map((e: any) => `${e.type} (fila ${e.row ?? '?'}): ${e.message}`).join('; ');
+      return NextResponse.json({
+        error: `Error al parsear el CSV: ${detail}. Verifica que el archivo sea un CSV válido con separador de coma (,) o punto y coma (;).`,
       }, { status: 400 });
     }
 
     const rows = parseResult.data as Record<string, any>[];
 
     if (rows.length === 0) {
-      return NextResponse.json({ error: 'El archivo CSV está vacío o no tiene datos' }, { status: 400 });
+      return NextResponse.json({ error: 'El archivo CSV está vacío o no tiene datos válidos.' }, { status: 400 });
+    }
+    
+    if (rows.length > 2000) {
+      return NextResponse.json({ error: 'El archivo CSV supera el límite de 2,000 filas permitidas por archivo.' }, { status: 400 });
+    }
+
+    // Detect missing required columns before processing rows
+    const detectedHeaders = Object.keys(rows[0]);
+    const hasSku = detectedHeaders.includes('sku');
+    const hasName = detectedHeaders.includes('name');
+    const missingCols: string[] = [];
+    if (!hasSku) missingCols.push('identificador único (sku, código, VIN, lote, stock_number…)');
+    if (!hasName) missingCols.push('nombre (nombre, name, título, modelo…)');
+    if (missingCols.length > 0) {
+      return NextResponse.json({
+        error: `Columnas requeridas no encontradas: ${missingCols.join(' | ')}. Columnas detectadas en el archivo: ${detectedHeaders.join(', ')}.`
+      }, { status: 400 });
     }
 
     const result: ImportResult & { importedCount?: number } = {
@@ -180,7 +226,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Execute Upsert
-    const { data: upsertData, error: upsertError } = await supabase
+    const { data: upsertData, error: upsertError } = await adminClient
       .from('products')
       .upsert(parsedProducts, { 
         onConflict: 'company_id,sku',
@@ -193,14 +239,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Error en la base de datos: ${upsertError.message}` }, { status: 500 });
     }
 
-    // Mark onboarding as completed 
-    await supabase
-      .from('companies')
-      .update({ 
-        onboarding_status: 'completed',
-        onboarding_completed_at: new Date().toISOString()
-      })
-      .eq('id', company_id);
+    // Mark onboarding as completed (only when mode is 'onboarding')
+    if (mode === 'onboarding') {
+      await adminClient
+        .from('companies')
+        .update({ 
+          onboarding_status: 'completed',
+          onboarding_completed_at: new Date().toISOString()
+        })
+        .eq('id', company_id);
+    }
 
     result.importedCount = upsertData?.length || 0;
 

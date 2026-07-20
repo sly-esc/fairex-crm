@@ -16,6 +16,7 @@ export default async function CompanyDetailPage({ params }: PageProps) {
   const { success, data, error } = await getCompanyDetail(id);
 
   if (!success || !data) {
+    console.error(`[CompanyDetailPage] Could not load company id=${id}. Error: ${error}`);
     notFound();
   }
 

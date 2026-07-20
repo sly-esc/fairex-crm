@@ -1,11 +1,16 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireSuperAdmin } from "@/lib/superadmin";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Building2, CheckCircle2, Users } from "lucide-react";
 
 export default async function SuperAdminDashboard() {
-  const supabase = await createClient();
+  const auth = await requireSuperAdmin();
+  if (!auth.success) redirect('/login');
+
+  const supabase = createAdminClient();
   
-  // Obtener estadísticas
+  // Obtener estadísticas usando columnas reales de la DB
   const { count: totalCompanies } = await supabase
     .from('companies')
     .select('*', { count: 'exact', head: true });
@@ -13,19 +18,26 @@ export default async function SuperAdminDashboard() {
   const { count: activeCompanies } = await supabase
     .from('companies')
     .select('*', { count: 'exact', head: true })
-    .eq('is_active', true);
+    .eq('estado', 'activa');  // columna real es 'estado', no 'is_active'
     
   const { count: onboardedCompanies } = await supabase
     .from('companies')
     .select('*', { count: 'exact', head: true })
     .not('onboarding_completed_at', 'is', null);
 
-  // Obtener empresas recientes
-  const { data: recentCompanies } = await supabase
+  // Obtener empresas recientes con columnas explícitas para mapeo correcto
+  const { data: recentCompaniesRaw } = await supabase
     .from('companies')
-    .select('*')
+    .select('id, nombre, plan, estado, onboarding_status, onboarding_completed_at, created_at')
     .order('created_at', { ascending: false })
     .limit(5);
+
+  // Mapear columnas DB → propiedades UI
+  const recentCompanies = (recentCompaniesRaw || []).map((c: any) => ({
+    ...c,
+    name: c.nombre ?? '(Sin nombre)',
+    is_active: c.estado === 'activa',
+  }));
 
   return (
     <div className="space-y-6">

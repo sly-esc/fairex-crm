@@ -1,73 +1,164 @@
 'use server';
 
-import { createClient } from '@/lib/supabase/server';
-import { CompanyIntegration } from '@/types/superadmin';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { requireSuperAdmin } from '@/lib/superadmin';
+import { CompanyIntegration, WizardIntegrationKey } from '@/types/superadmin';
+import { encryptCredentials, isEncryptedCredentialsEnvelope } from '@/lib/integrations/encryption.server';
+import { INTEGRATION_ALLOWLIST } from '@/lib/integrations/definitions.server';
 import { revalidatePath } from 'next/cache';
 
-export type ActionResponse<T> = { success: boolean; data?: T; error?: string };
+import type { ActionResponse } from '@/actions/superadmin/companies';
 
-export async function listIntegrations(company_id: string): Promise<ActionResponse<CompanyIntegration[]>> {
-  const supabase = await createClient();
+export async function listIntegrations(companyId: number): Promise<ActionResponse<CompanyIntegration[]>> {
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
+  const adminClient = createAdminClient();
   
-  // No traemos las credentials por seguridad, solo metadata
-  const { data, error } = await supabase
+  // No traemos las credentials en texto plano por seguridad
+  const { data, error } = await adminClient
     .from('company_integrations')
-    .select('id, company_id, provider, integration_key, provider_account_id, display_name, connection_type, is_active, status, config, last_sync_at, last_error, sync_frequency, created_at, updated_at')
-    .eq('company_id', company_id);
+    .select('id, company_id, provider, integration_key, provider_account_id, display_name, connection_type, is_active, status, config, last_sync_at, last_error, sync_frequency, created_at, updated_at, credentials')
+    .eq('company_id', companyId);
 
   if (error) return { success: false, error: error.message };
 
-  return { success: true, data: data as CompanyIntegration[] };
+  const safeData: CompanyIntegration[] = (data || []).map(int => {
+    const { credentials, ...rest } = int;
+    return {
+      ...rest,
+      has_credentials: isEncryptedCredentialsEnvelope(credentials)
+    };
+  });
+
+  return { success: true, data: safeData };
 }
 
 export async function saveIntegration(
-  company_id: string, 
-  provider: CompanyIntegration['provider'], 
-  integration_key: string,
-  provider_account_id: string,
-  credentials: Record<string, any>, 
-  config: Record<string, any> = {},
-  display_name: string = ''
+  companyId: number, 
+  integrationKey: WizardIntegrationKey,
+  providerAccountId: string,
+  rawSecret: string
 ): Promise<ActionResponse<void>> {
-  const supabase = await createClient();
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
+  
+  if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+    return { success: false, error: 'companyId inválido' };
+  }
 
-  // Usamos upsert basado en company_id, provider y provider_account_id
-  const { error } = await supabase
+  const allowlist = INTEGRATION_ALLOWLIST[integrationKey];
+  if (!allowlist) {
+    return { success: false, error: 'Integración no permitida' };
+  }
+
+  const accountId = providerAccountId.trim();
+  const secret = rawSecret.trim();
+
+  if (allowlist.requiresAccountId && !accountId) {
+    return { success: false, error: 'Account ID es requerido' };
+  }
+  if (allowlist.provider === 'meta' && accountId.includes('@')) {
+    return { success: false, error: 'El ID de la cuenta no puede ser un correo electrónico' };
+  }
+  if (accountId.length > 256) {
+    return { success: false, error: 'Account ID es demasiado largo' };
+  }
+  if (secret.length > 2048) {
+    return { success: false, error: 'El secreto es demasiado largo' };
+  }
+
+  const adminClient = createAdminClient();
+
+  const { data: existing, error: searchError } = await adminClient
+    .from('company_integrations')
+    .select('id, credentials')
+    .eq('company_id', companyId)
+    .eq('integration_key', integrationKey)
+    .maybeSingle();
+
+  if (searchError) return { success: false, error: searchError.message };
+
+  let resolvedCredentials: Record<string, unknown> | null = null;
+
+  if (!existing) {
+    if (!secret) {
+      return { success: false, error: 'Secreto es obligatorio para una integración nueva' };
+    }
+    resolvedCredentials = encryptCredentials({ [allowlist.credentialKey]: secret });
+  } else {
+    if (secret) {
+      resolvedCredentials = encryptCredentials({ [allowlist.credentialKey]: secret });
+    } else {
+      if (isEncryptedCredentialsEnvelope(existing.credentials)) {
+        resolvedCredentials = existing.credentials as Record<string, unknown>;
+      } else {
+        return { success: false, error: 'Se requiere ingresar el secreto nuevamente por motivos de seguridad' };
+      }
+    }
+  }
+
+  const { error } = await adminClient
     .from('company_integrations')
     .upsert({
-      company_id,
-      provider,
-      integration_key,
-      provider_account_id,
-      display_name,
-      credentials,
-      config,
+      company_id: companyId,
+      provider: allowlist.provider,
+      integration_key: integrationKey,
+      provider_account_id: accountId || null,
+      display_name: allowlist.displayName,
+      connection_type: allowlist.connectionType,
+      credentials: resolvedCredentials,
+      config: {},
       is_active: true,
       status: 'connected',
       updated_at: new Date().toISOString()
     }, {
-      onConflict: 'company_id, provider, provider_account_id'
+      onConflict: 'company_id,integration_key'
     });
 
   if (error) return { success: false, error: error.message };
 
-  revalidatePath(`/superadmin/companies/${company_id}`);
+  revalidatePath(`/superadmin/companies/${companyId}`);
   
   return { success: true, data: undefined };
 }
 
-export async function deleteIntegration(id: string, company_id: string): Promise<ActionResponse<void>> {
-  const supabase = await createClient();
+export async function disconnectIntegration(id: string, companyId: number): Promise<ActionResponse<void>> {
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
+  const adminClient = createAdminClient();
   
-  const { error } = await supabase
+  const { error } = await adminClient
     .from('company_integrations')
-    .delete()
+    .update({
+      credentials: null,
+      is_active: false,
+      status: 'disconnected',
+      updated_at: new Date().toISOString()
+    })
     .eq('id', id)
-    .eq('company_id', company_id);
+    .eq('company_id', companyId);
 
   if (error) return { success: false, error: error.message };
 
-  revalidatePath(`/superadmin/companies/${company_id}`);
+  revalidatePath(`/superadmin/companies/${companyId}`);
+  
+  return { success: true, data: undefined };
+}
+
+export async function deleteIntegration(id: string, companyId: number): Promise<ActionResponse<void>> {
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
+  const adminClient = createAdminClient();
+  
+  const { error } = await adminClient
+    .from('company_integrations')
+    .delete()
+    .eq('id', id)
+    .eq('company_id', companyId);
+
+  if (error) return { success: false, error: error.message };
+
+  revalidatePath(`/superadmin/companies/${companyId}`);
   
   return { success: true, data: undefined };
 }

@@ -1,0 +1,241 @@
+# Plan Técnico Definitivo — Paso 5: Integraciones
+
+## Hallazgos de Auditoría Previos a Este Plan
+
+| Punto | Resultado |
+|---|---|
+| `company_id` en DB | **BIGINT (int8)**, confirmado en Fase 6 |
+| `company_id` en URL del Wizard | `string` (viene de `useSearchParams`) → debe validarse en servidor |
+| `credentials` en DB | JSONB **nullable** |
+| `deleteIntegration` en UI | **Sin ningún consumidor** en páginas ni componentes |
+| n8n y `credentials` | **No los lee**. Solo usa columnas de metadata |
+| `CompanyDetailClient` | Renderiza `int.provider`, `int.display_name`, `int.provider_account_id`, `int.status`, `int.connection_type`, `int.sync_frequency` — **nunca `credentials`** |
+
+---
+
+## A. SQL Completo de `migration_phase_11_integrations_key_unique.sql`
+
+```sql
+-- ======================================================================================
+-- MIGRACIÓN FASE 11: UNIQUE(company_id, integration_key) en company_integrations
+-- ======================================================================================
+-- Objetivo: Garantizar que cada empresa tenga como máximo una configuración
+--           por canal lógico (integration_key), sin importar cuántas veces cambie
+--           el provider_account_id. Resuelve la estrategia de upsert atómico.
+--
+-- REGLAS INAMOVIBLES:
+-- 1. Solo ADD CONSTRAINT mediante bloque DO — NUNCA ALTER COLUMN ni DROP.
+-- 2. Aborta con mensaje claro si existen duplicados previos.
+-- 3. No elimina el constraint histórico: UNIQUE(company_id, provider, provider_account_id).
+-- 4. Idempotente: puede ejecutarse N veces sin errores si el constraint ya existe.
+-- 5. No cambia tipos ni elimina columnas.
+-- ======================================================================================
+
+DO $$
+BEGIN
+
+  -- ──────────────────────────────────────────────────────────────────────────────────────
+  -- PASO 1: Verificar ausencia de duplicados (company_id, integration_key)
+  -- Si los hay, abortar con mensaje explicativo antes de intentar ADD CONSTRAINT.
+  -- ──────────────────────────────────────────────────────────────────────────────────────
+  IF EXISTS (
+    SELECT company_id, integration_key
+    FROM   public.company_integrations
+    GROUP  BY company_id, integration_key
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION
+      'FAIREX ERROR: Existen filas duplicadas en public.company_integrations '
+      'por (company_id, integration_key). Limpia los duplicados antes de ejecutar '
+      'esta migración.';
+  END IF;
+
+  -- ──────────────────────────────────────────────────────────────────────────────────────
+  -- PASO 2: Agregar constraint UNIQUE solo si no existe todavía
+  -- Se consulta pg_constraint para garantizar idempotencia completa.
+  -- ──────────────────────────────────────────────────────────────────────────────────────
+  IF NOT EXISTS (
+    SELECT 1
+    FROM   pg_constraint c
+    JOIN   pg_class      t ON t.oid = c.conrelid
+    JOIN   pg_namespace  n ON n.oid = t.relnamespace
+    WHERE  n.nspname = 'public'
+      AND  t.relname = 'company_integrations'
+      AND  c.conname = 'uq_company_integration_key'
+      AND  c.contype = 'u'
+  ) THEN
+    ALTER TABLE public.company_integrations
+      ADD CONSTRAINT uq_company_integration_key
+      UNIQUE (company_id, integration_key);
+  END IF;
+
+END $$;
+
+-- Recargar schema de PostgREST para que el constraint sea visible inmediatamente
+NOTIFY pgrst, 'reload schema';
+```
+
+> [!NOTE]
+> El constraint histórico `UNIQUE(company_id, provider, provider_account_id)` queda intacto. El nuevo `uq_company_integration_key` convive con él.
+
+---
+
+## B. Allowlist Exacta Basada en Tipos Reales
+
+El enum de `provider` declarado en `migration_phase_6_foundation.sql` línea 56:
+```
+'meta' | 'rack' | 'shopify' | 'woocommerce' | 'microsip' | 'manual' | 'google' | 'tiktok' | 'stripe'
+```
+
+Para el **Wizard del Paso 5** solo se exponen 3 combinaciones. La allowlist server-side será:
+
+```typescript
+const WIZARD_INTEGRATION_ALLOWLIST = [
+  {
+    provider:        'meta' as const,
+    integration_key: 'whatsapp_official',
+    credentialKeys:  ['token'] as const,
+    requiresAccountId: true,
+  },
+  {
+    provider:        'meta' as const,
+    integration_key: 'facebook_page',
+    credentialKeys:  ['token'] as const,
+    requiresAccountId: true,
+  },
+  {
+    provider:        'rack' as const,
+    integration_key: 'rack_erp',
+    credentialKeys:  ['api_key'] as const,
+    requiresAccountId: false,
+  },
+] as const;
+```
+
+Cualquier `(provider, integration_key)` fuera de esta lista → `return { success: false, error: 'Integración no permitida' }` sin loguear los valores recibidos.
+
+---
+
+## C. Firma Final de `saveIntegration`
+
+```typescript
+export async function saveIntegration(
+  companyId: number,                           // BIGINT: number, no string
+  provider: 'meta' | 'rack',
+  integrationKey: string,
+  providerAccountId: string,                   // trim() en servidor
+  rawCredentials: Record<string, string>,      // vacío = conservar existente
+  config: Record<string, unknown> = {},
+  displayName: string = ''
+): Promise<ActionResponse<void>>
+```
+
+**Validaciones server-side en orden:**
+
+1. `requireSuperAdmin()` → abortar si no autorizado
+2. `Number.isSafeInteger(companyId) && companyId > 0` → error si inválido
+3. Lookup en allowlist: `(provider, integrationKey)` debe existir → error si no
+4. `providerAccountId = providerAccountId.trim()`
+5. Si `requiresAccountId && !providerAccountId` → error de validación
+6. Si `providerAccountId.includes('@')` → error: "El ID no puede ser un correo electrónico"
+7. `providerAccountId.length > 256` → error: "ID demasiado largo"
+8. Verificar que `Object.keys(rawCredentials)` ⊆ `credentialKeys` del allowlist → error si hay claves inesperadas
+9. `adminClient` — buscar fila existente por `(company_id, integration_key)`
+10. Calcular `hasNewSecret = Object.values(rawCredentials).some(v => v.trim() !== '')`
+11. Si integración nueva (`!existing`) y `!hasNewSecret` → **no insertar, return success: true** (skip silencioso)
+12. Resolver `credentials`:
+    - `hasNewSecret` → `encryptCredentials(rawCredentials)` (envelope cifrado)
+    - `!hasNewSecret && existing?.credentials` → conservar `existing.credentials`
+    - `!hasNewSecret && !existing?.credentials` → `null`
+13. Calcular `status`: si `credentials !== null` → `'connected'`, si no → `'disconnected'`
+14. `adminClient.upsert({ company_id: companyId, provider, integration_key: integrationKey, provider_account_id: providerAccountId, display_name: displayName, credentials, config, is_active: credentials !== null, status, updated_at }, { onConflict: 'company_id,integration_key' })`
+    > ⚠️ El `onConflict` solo funciona **después de ejecutar Fase 11**.
+15. Verificar error de Supabase → `return { success: false, error: error.message }`
+16. `revalidatePath(...)` → `return { success: true }`
+
+---
+
+## D. Auditoría Completa de Consumidores de `credentials`
+
+### Consumidores actuales (todos los archivos del repositorio):
+
+| Archivo | Tipo | Acceso a `credentials` | Propósito |
+|---|---|---|---|
+| `src/actions/superadmin/integrations.ts` | Server Action | **Escribe** `credentials` en el upsert (actualmente sin cifrar) | Guardar credenciales desde el Wizard |
+| `src/actions/superadmin/companies.ts` | Server Action | **Lee** `credentials` mediante `select('*')` | Devuelve todo a `getCompanyDetail` (fuga actual) |
+| `src/app/(superadmin)/superadmin/onboarding/OnboardingWizard.tsx` | Client Component | Accede a `int.credentials?.whatsapp_token` etc. | Precarga de inputs (fuga actual, debe eliminarse) |
+| `src/app/api/n8n/context/route.ts` | API Route | **No accede a `credentials`** — select explícito sin esa columna | Resolución de tenant, no necesita secretos |
+| `src/app/(superadmin)/superadmin/companies/[id]/page.tsx` | Server Component | Recibe `company_integrations` de `getCompanyDetail` (incluye credenciales hoy) | Pasa al Client Component |
+| `src/app/(superadmin)/superadmin/companies/[id]/CompanyDetailClient.tsx` | Client Component | **No accede a `credentials`** — solo renderiza `provider`, `display_name`, `provider_account_id`, `status` | Vista de detalle de empresa |
+
+### ¿Quién necesitará **descifrar** credenciales en el futuro?
+
+| Caso de uso | Necesita descifrar | Dónde |
+|---|---|---|
+| n8n enviar mensajes vía API de Meta | **Sí** | En un Server Action o API route dedicado que n8n invoca (futuro: `/api/integrations/meta/send`) |
+| Rack ERP sync | **Sí** | En un futuro Server Action de sincronización |
+| UI mostrar token | **Nunca** | La UI solo recibe `has_credentials: boolean` |
+| Onboarding Wizard recargar | **Nunca** | Inputs de secreto permanecen vacíos, solo se muestra el indicador |
+
+**Conclusión:** Hoy solo `saveIntegration` necesita cifrar. Ningún consumidor actual necesita descifrar. Los futuros consumidores (n8n send, sync) leerán la columna `credentials` server-side e importarán `decryptCredentials` desde el helper server-only.
+
+---
+
+## E. Archivos Exactos a Modificar
+
+| # | Archivo | Operación |
+|---|---|---|
+| 1 | `supabase/migrations/migration_phase_11_integrations_key_unique.sql` | **NUEVO** — ya preparado arriba |
+| 2 | `src/lib/integrations/encryption.server.ts` | **NUEVO** — AES-256-GCM, server-only |
+| 3 | `src/actions/superadmin/integrations.ts` | **MODIFICAR** — adminClient, allowlist, cifrado, upsert por integration_key |
+| 4 | `src/actions/superadmin/companies.ts` | **MODIFICAR** — `getCompanyDetail`: columnas explícitas en integrations, `has_credentials` calculado en servidor |
+| 5 | `src/types/superadmin.ts` | **MODIFICAR** — `has_credentials: boolean` en `CompanyIntegration` |
+| 6 | `src/app/(superadmin)/superadmin/onboarding/OnboardingWizard.tsx` | **MODIFICAR** — anti-autofill, precarga sin secretos, validaciones, "Configurar después" |
+
+**No se toca en esta fase:**
+- `src/app/api/n8n/context/route.ts`
+- `src/app/(superadmin)/superadmin/companies/[id]/CompanyDetailClient.tsx` (ya no accede a `credentials`)
+- RLS, Migración 8, Dashboard Cliente
+
+---
+
+## F. Comportamiento de `disconnectIntegration`
+
+**¿Los consumidores toleran `credentials = NULL`?**
+
+Verificado en todos los archivos:
+- `n8n/context/route.ts`: no lee `credentials` → ✅ tolera NULL
+- `CompanyDetailClient.tsx`: no accede a `credentials` → ✅ tolera NULL
+- `listIntegrations`: ya excluye `credentials` del `select` → ✅ tolera NULL
+- `getCompanyDetail`: después de la corrección, solo calculará el booleano → ✅ tolera NULL
+
+**Propuesta de `disconnectIntegration`:**
+
+```typescript
+export async function disconnectIntegration(
+  id: string,
+  companyId: number
+): Promise<ActionResponse<void>> {
+  // requireSuperAdmin() + adminClient
+  // UPDATE: credentials = null, is_active = false, status = 'disconnected'
+  // .eq('id', id).eq('company_id', companyId)  ← doble condición de seguridad
+  // Conserva la fila para auditoría
+  // n8n no resolverá esta integración (is_active = false)
+}
+```
+
+`deleteIntegration` (eliminación física) permanece como utilidad interna del Super Admin únicamente, sin exponer en UI del Wizard.
+
+---
+
+## Secuencia de Implementación
+
+1. **Tú**: Agregar `INTEGRATIONS_ENCRYPTION_KEY` a `.env.local` (64 hex chars, generado con `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` — sin mostrar el valor aquí).
+2. **Tú**: Ejecutar `migration_phase_11_integrations_key_unique.sql` en Supabase.
+3. **Tú**: Confirmarme ambos pasos completados.
+4. **Yo**: Implementar en orden: `encryption.server.ts` → `integrations.ts` → `companies.ts` → `types/superadmin.ts` → `OnboardingWizard.tsx`.
+5. **Yo**: `npm run build` para validar.
+
+## User Review Required
+
+Revisa los 6 entregables (A–F). Cuando apruebes, agrégame la clave de entorno y ejecuta la Fase 11 para que podamos implementar el TypeScript.
