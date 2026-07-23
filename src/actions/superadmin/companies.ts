@@ -159,10 +159,13 @@ export async function getCompanyDetail(id: string): Promise<ActionResponse<any>>
         const { data: userData, error: userError } = await adminClient.auth.admin.getUserById(authUserId);
         if (userError || !userData?.user) {
           adminAccessStatus = 'ambiguous';
-        } else if (userData.user.email_confirmed_at === null) {
-          adminAccessStatus = 'pending';
         } else {
-          adminAccessStatus = 'active';
+          const confirmedAt = userData.user.email_confirmed_at ?? userData.user.confirmed_at ?? null;
+          if (confirmedAt === null) {
+            adminAccessStatus = 'pending';
+          } else {
+            adminAccessStatus = 'active';
+          }
         }
       }
     }

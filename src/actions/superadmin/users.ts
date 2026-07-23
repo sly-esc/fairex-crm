@@ -91,17 +91,32 @@ export async function resendAdminAccess(companyId: number): Promise<ResendAdminA
     return { success: false, code: 'not_available' }
   }
 
-  if (userData.user.email_confirmed_at !== null) {
+  const confirmedAt = userData.user.email_confirmed_at ?? userData.user.confirmed_at ?? null;
+  if (confirmedAt !== null) {
     return { success: false, code: 'already_active' }
   }
 
-  const metadataCompanyId = userData.user.user_metadata?.company_id
+  const rawMetadataCompanyId = userData.user.user_metadata?.company_id
+
+  let metadataCompanyId: number | null = null
 
   if (
-    typeof metadataCompanyId !== 'number' ||
-    !Number.isSafeInteger(metadataCompanyId) ||
-    metadataCompanyId !== companyId
+    typeof rawMetadataCompanyId === 'number' &&
+    Number.isSafeInteger(rawMetadataCompanyId) &&
+    rawMetadataCompanyId > 0
   ) {
+    metadataCompanyId = rawMetadataCompanyId
+  } else if (
+    typeof rawMetadataCompanyId === 'string' &&
+    /^[1-9]\d*$/.test(rawMetadataCompanyId)
+  ) {
+    const parsed = Number(rawMetadataCompanyId)
+    if (Number.isSafeInteger(parsed) && parsed > 0) {
+      metadataCompanyId = parsed
+    }
+  }
+
+  if (metadataCompanyId !== companyId) {
     return { success: false, code: 'not_available' }
   }
 
