@@ -137,6 +137,39 @@ export async function getCompanyDetail(id: string): Promise<ActionResponse<any>>
     };
   });
 
+  let adminAccessStatus: 'pending' | 'active' | 'missing' | 'ambiguous' = 'ambiguous';
+  try {
+    const { data: profiles, error: profileError } = await adminClient
+      .from('profiles')
+      .select('auth_user_id')
+      .eq('company_id', id)
+      .eq('role', 'admin');
+
+    if (profileError) {
+      adminAccessStatus = 'ambiguous';
+    } else if (!profiles || profiles.length === 0) {
+      adminAccessStatus = 'missing';
+    } else if (profiles.length > 1) {
+      adminAccessStatus = 'ambiguous';
+    } else {
+      const authUserId = profiles[0].auth_user_id;
+      if (!authUserId) {
+        adminAccessStatus = 'missing';
+      } else {
+        const { data: userData, error: userError } = await adminClient.auth.admin.getUserById(authUserId);
+        if (userError || !userData?.user) {
+          adminAccessStatus = 'ambiguous';
+        } else if (userData.user.email_confirmed_at === null) {
+          adminAccessStatus = 'pending';
+        } else {
+          adminAccessStatus = 'active';
+        }
+      }
+    }
+  } catch (e) {
+    adminAccessStatus = 'ambiguous';
+  }
+
   const mappedData = {
     ...company,
     company_settings: settingsData || [],
@@ -145,6 +178,7 @@ export async function getCompanyDetail(id: string): Promise<ActionResponse<any>>
     name: company.nombre ?? company.name ?? '(Sin nombre)',
     is_active: company.estado === 'activa',
     phone: company.telefono ?? null,
+    adminAccessStatus,
   };
 
   return { success: true, data: mappedData };

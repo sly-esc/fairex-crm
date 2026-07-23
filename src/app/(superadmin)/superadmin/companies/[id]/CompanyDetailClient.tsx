@@ -11,9 +11,10 @@ interface CompanyDetailClientProps {
   modules: CompanyModule[];
   integrations: CompanyIntegration[];
   aiConfig: AiConfig;
+  adminAccessStatus?: 'pending' | 'active' | 'missing' | 'ambiguous';
 }
 
-export default function CompanyDetailClient({ company, modules, integrations, aiConfig }: CompanyDetailClientProps) {
+export default function CompanyDetailClient({ company, modules, integrations, aiConfig, adminAccessStatus }: CompanyDetailClientProps) {
   const [activeTab, setActiveTab] = useState('general');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -23,6 +24,9 @@ export default function CompanyDetailClient({ company, modules, integrations, ai
   const [csvError, setCsvError] = useState<string | null>(null);
   const [csvRowErrors, setCsvRowErrors] = useState<{ row: number; error: string }[]>([]);
   const [csvSuccess, setCsvSuccess] = useState<{ importedCount: number } | null>(null);
+
+  // Admin access resend state
+  const [resendStatus, setResendStatus] = useState<{ loading: boolean; success?: boolean; error?: string }>({ loading: false });
 
   const handleToggleStatus = async () => {
     setIsSaving(true);
@@ -61,6 +65,29 @@ export default function CompanyDetailClient({ company, modules, integrations, ai
       setCsvError(err.message || 'Error de red al subir el archivo.');
     }
     setCsvLoading(false);
+  };
+
+  const handleResendAccess = async () => {
+    setResendStatus({ loading: true });
+    try {
+      const numericCompanyId = Number(company.id);
+      if (!Number.isSafeInteger(numericCompanyId) || numericCompanyId <= 0) {
+        setResendStatus({ loading: false, error: 'No fue posible identificar la empresa.' });
+        return;
+      }
+      const { resendAdminAccess } = await import('@/actions/superadmin/users');
+      const result = await resendAdminAccess(numericCompanyId);
+      if (result.success) {
+        setResendStatus({ loading: false, success: true });
+      } else {
+        const errorMsg = result.code === 'already_active' 
+          ? 'El acceso ya está activo.' 
+          : 'Error al reenviar el acceso. Inténtalo de nuevo.';
+        setResendStatus({ loading: false, error: errorMsg });
+      }
+    } catch (err) {
+      setResendStatus({ loading: false, error: 'Error inesperado.' });
+    }
   };
 
   return (
@@ -136,6 +163,36 @@ export default function CompanyDetailClient({ company, modules, integrations, ai
                 <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Fecha de Creación</label>
                 <div className="text-sm text-zinc-300">{new Date(company.created_at).toLocaleString()}</div>
               </div>
+            </div>
+            
+            <div className="mt-8 border-t border-white/10 pt-6">
+              <h4 className="text-sm font-medium text-white mb-4">Acceso de Administrador</h4>
+              
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={handleResendAccess}
+                  disabled={resendStatus.loading || adminAccessStatus !== 'pending'}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-600/40 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors"
+                >
+                  {resendStatus.loading ? 'Enviando...' : 'Reenviar acceso al administrador'}
+                </button>
+                {adminAccessStatus !== 'pending' && (
+                  <span className="text-xs text-zinc-500">
+                    {adminAccessStatus === 'active' ? 'El administrador ya está activo.' : 'Estado del administrador no permite reenvío.'}
+                  </span>
+                )}
+              </div>
+              
+              {resendStatus.success && (
+                <div className="mt-3 p-3 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
+                  El acceso ha sido reenviado correctamente.
+                </div>
+              )}
+              {resendStatus.error && (
+                <div className="mt-3 p-3 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                  {resendStatus.error}
+                </div>
+              )}
             </div>
           </div>
         )}

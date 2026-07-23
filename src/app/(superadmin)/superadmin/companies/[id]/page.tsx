@@ -39,6 +39,7 @@ export default async function CompanyDetailPage({ params }: PageProps) {
       modules={company_modules || []} 
       integrations={company_integrations || []} 
       aiConfig={aiConfig} 
+      adminAccessStatus={company.adminAccessStatus}
     />
   );
 }

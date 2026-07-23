@@ -1,0 +1,134 @@
+# Plan Técnico Definitivo (Actualizado) — Paso 5: Integraciones
+
+Las correcciones finales al diseño han sido aplicadas.
+
+## 1. Archivo SQL de la Fase 11 (Listo para ejecución manual)
+
+Ruta: `supabase/migrations/migration_phase_11_integrations_key_unique.sql`
+(El contenido es exactamente el presentado en el plan anterior, usando un bloque `DO` idempotente con `pg_constraint`, agregando `UNIQUE(company_id, integration_key)`, sin eliminar nada más, e incluyendo `NOTIFY pgrst, 'reload schema';`).
+
+## 2. Tipo Seguro (company_id: number)
+
+Archivo: `src/types/superadmin.ts`
+
+```typescript
+export interface CompanyIntegration {
+  id: string;
+  company_id: number; // Modificado a BIGINT/number real
+  provider: 'meta' | 'rack' | 'shopify' | 'woocommerce' | 'microsip' | 'manual' | 'google' | 'tiktok' | 'stripe';
+  integration_key: string;
+  provider_account_id: string | null;
+  display_name: string | null;
+  connection_type: 'oauth' | 'api_key' | 'webhook' | 'manual';
+  is_active: boolean;
+  status: 'connected' | 'disconnected' | 'error';
+  config: Record<string, any>;
+  last_sync_at: string | null;
+  last_error: string | null;
+  sync_frequency: string;
+  created_at: string;
+  updated_at: string;
+  has_credentials: boolean; 
+  // Sin credentials
+}
+```
+
+## 3. Allowlist Server-Side Estricta
+
+```typescript
+export type WizardIntegrationKey = 'whatsapp_official' | 'facebook_page' | 'rack_erp';
+
+export const INTEGRATION_ALLOWLIST: Record<WizardIntegrationKey, {
+  provider: 'meta' | 'rack';
+  displayName: string;
+  connectionType: 'api_key';
+  credentialKey: string;
+  requiresAccountId: boolean;
+}> = { /* ... declarada como en el plan anterior ... */ };
+```
+
+## 4. Firma y Lógica de Conservación de Secretos en `saveIntegration`
+
+```typescript
+export async function saveIntegration(
+  companyId: number,
+  integrationKey: WizardIntegrationKey,
+  providerAccountId: string,
+  rawSecret: string
+): Promise<ActionResponse<void>>
+```
+
+# Plan: Activar Usuario Pendiente con Magic Link y PKCE
+
+El flujo actual falla porque `@supabase/ssr` exige PKCE, pero la plantilla actual no transfiere el "code verifier". Para enviar un correo oficial a un usuario existente sin borrarlo ni duplicarlo, usaremos un Magic Link y una ruta de confirmación controlada server-side.
+
+## User Review Required
+
+> [!WARNING]
+> Este plan incluye modificaciones manuales obligatorias a las plantillas de correo de Supabase. Debes hacerlas tú mismo en el panel de control de Supabase antes de que la nueva ruta funcione.
+
+## 1. Modificaciones a Plantillas de Supabase (Acción Manual Requerida)
+
+Debes ir al panel de Supabase -> Authentication -> Emails y realizar los siguientes cambios:
+
+### Plantilla "Magic Link" (Usada por `signInWithOtp`)
+Cambiar el enlace actual por este contenido estructural:
+```html
+<a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email&next=/set-password">
+  Acceder a FAIREX
+</a>
+```
+
+### Plantilla "Invite User" (Usada por `inviteUserByEmail` para futuros usuarios)
+Cambiar el enlace actual por este contenido estructural:
+```html
+<a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next=/set-password">
+  Aceptar invitación
+</a>
+```
+
+## 2. Cambios en Backend y Frontend
+
+### [NUEVO] `src/app/auth/confirm/route.ts`
+Crearemos la ruta de confirmación que interceptará el `token_hash`.
+- Validará `type` contra esta allowlist estricta: `['email', 'invite', 'magiclink', 'recovery']`.
+- Validará `next` contra esta allowlist estricta: `['/set-password', '/dashboard']`.
+- Ejecutará `supabase.auth.verifyOtp()` en el servidor y establecerá cookies.
+- Redirigirá a `https://fairexcrm.online/set-password` en caso de éxito, o a `/login?error=...` si falla.
+
+### [NUEVO] `src/app/(auth)/set-password/page.tsx`
+Ruta y UI para establecer la contraseña inicial.
+- Requerirá usuario autenticado (redirige a `/login` si no hay sesión).
+- Formulario de contraseña y confirmación (min 8 chars).
+- Ejecutará `supabase.auth.updateUser({ password: '...' })`.
+- Redirigirá a `/dashboard` al terminar.
+
+### [MODIFY] `src/actions/superadmin/users.ts`
+Firma de la nueva acción:
+```typescript
+export async function resendAdminInvitation(companyId: number): Promise<ActionResponse<void>>
+```
+- Se ejecuta validando al perfil desde el lado del servidor.
+- Consulta `profiles` por `company_id = companyId` y `role = 'admin'`.
+- Resuelve `auth_user_id` y extrae el email desde `auth.users` usando el cliente Admin.
+- Envía acceso usando:
+```typescript
+await adminClient.auth.signInWithOtp({
+  email: targetEmail,
+  options: {
+    shouldCreateUser: false,
+    emailRedirectTo: 'https://fairexcrm.online/auth/confirm'
+  }
+})
+```
+
+### [MODIFY] `src/app/(superadmin)/superadmin/companies/[id]/CompanyDetailClient.tsx`
+Añadir el botón "Reenviar acceso al administrador".
+- No pide correo ni lo muestra.
+- Solo se activa si la empresa tiene administradores (vía props o asumiendo el rol 'admin' de la empresa).
+- Manejo de estados `loading`, `success`, `error`.
+
+## Verificación Plan
+- No se borrará ningún usuario.
+- No se modificará `profiles.email`.
+- Las pruebas se harán haciendo click en el link simulando un dispositivo sin estado previo de sesión.

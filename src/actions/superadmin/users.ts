@@ -6,6 +6,24 @@ import { requireSuperAdmin } from '@/lib/superadmin';
 
 export type ActionResponse<T> = { success: boolean; data?: T; error?: string };
 
+export type ResendAdminAccessResult =
+  | { success: true }
+  | {
+      success: false
+      code:
+        | 'not_available'
+        | 'already_active'
+        | 'rate_limited'
+        | 'dispatch_failed'
+    }
+
+function buildSecureOrigin() {
+  if (process.env.NODE_ENV === 'development') {
+    return 'http://localhost:3000'
+  }
+  return 'https://fairexcrm.online'
+}
+
 export async function inviteAdminUser(company_id: string, email: string): Promise<ActionResponse<any>> {
   const auth = await requireSuperAdmin();
   if (!auth.success) return { success: false, error: auth.error };
@@ -43,4 +61,70 @@ export async function inviteAdminUser(company_id: string, email: string): Promis
     .eq('id', company_id);
 
   return { success: true, data: data.user };
+}
+
+export async function resendAdminAccess(companyId: number): Promise<ResendAdminAccessResult> {
+  const auth = await requireSuperAdmin()
+  if (!auth.success) return { success: false, code: 'not_available' }
+
+  if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+    return { success: false, code: 'not_available' }
+  }
+
+  const adminClient = createAdminClient()
+
+  const { data: profiles, error: profileError } = await adminClient
+    .from('profiles')
+    .select('auth_user_id')
+    .eq('company_id', companyId)
+    .eq('role', 'admin')
+
+  if (profileError || !profiles || profiles.length !== 1 || !profiles[0].auth_user_id) {
+    return { success: false, code: 'not_available' }
+  }
+
+  const { data: userData, error: userError } = await adminClient.auth.admin.getUserById(
+    profiles[0].auth_user_id
+  )
+
+  if (userError || !userData?.user || !userData.user.email) {
+    return { success: false, code: 'not_available' }
+  }
+
+  if (userData.user.email_confirmed_at !== null) {
+    return { success: false, code: 'already_active' }
+  }
+
+  const metadataCompanyId = userData.user.user_metadata?.company_id
+
+  if (
+    typeof metadataCompanyId !== 'number' ||
+    !Number.isSafeInteger(metadataCompanyId) ||
+    metadataCompanyId !== companyId
+  ) {
+    return { success: false, code: 'not_available' }
+  }
+
+  const { createPasswordlessDispatchClient } = await import('@/lib/supabase/passwordless-dispatch')
+  const dispatchClient = createPasswordlessDispatchClient()
+
+  const appOrigin = buildSecureOrigin()
+
+  const { error: otpError } = await dispatchClient.auth.signInWithOtp({
+    email: userData.user.email,
+    options: {
+      shouldCreateUser: false,
+      emailRedirectTo: new URL('/auth/confirm', appOrigin).toString(),
+    },
+  })
+
+  if (otpError) {
+    // Only detect rate_limit if status code is known (HTTP 429) - AuthError often exposes status
+    if (otpError.status === 429) {
+      return { success: false, code: 'rate_limited' }
+    }
+    return { success: false, code: 'dispatch_failed' }
+  }
+
+  return { success: true }
 }
