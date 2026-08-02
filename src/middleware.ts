@@ -2,6 +2,13 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 
 export async function middleware(request: NextRequest) {
+  // /api/n8n/context usa autenticación propia mediante x-n8n-secret.
+  // n8n no tiene cookie de sesión de Supabase — no debe ser redirigido a /login.
+  // Solo esta ruta queda excluida; otras rutas API siguen protegidas normalmente.
+  if (request.nextUrl.pathname === '/api/n8n/context') {
+    return NextResponse.next();
+  }
+
   // Desactivar middleware temporalmente si no hay variables de entorno (Modo UI Testing)
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     if (request.nextUrl.pathname === '/' || request.nextUrl.pathname.startsWith('/login')) {
