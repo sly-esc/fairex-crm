@@ -133,7 +133,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
       // 2a. Datos base de la empresa
       supabase
         .from('companies')
-        .select('id, name, slug, plan, is_active, industry')
+        .select('id, nombre, slug, plan, estado, industry')
         .eq('id', company_id)
         .single(),
 
@@ -163,7 +163,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
     const company = companyResult.data;
 
     // Verificar empresa activa
-    if (!company.is_active) {
+    if (company.estado !== 'activa') {
       return NextResponse.json(
         { ok: false, error: 'La empresa está inactiva', code: 'COMPANY_INACTIVE' },
         { status: 403 }
@@ -187,10 +187,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
     const runtime: N8NRuntimeObject = {
       context: {
         company_id: company.id,
-        company_name: company.name,
+        company_name: company.nombre,
         company_slug: company.slug ?? null,
         plan: company.plan,
-        is_active: company.is_active,
+        is_active: company.estado === 'activa',
         industry: company.industry ?? null,
         integration_id: integration.id,
         integration_display_name: integration.display_name ?? null,
