@@ -75,6 +75,15 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
     );
   }
 
+  // Normalización estricta y condicionada del identifier
+  let normalizedIdentifier = String(identifier).trim();
+  if (provider === 'ycloud') {
+    normalizedIdentifier = normalizedIdentifier.replace(/\D/g, '');
+  }
+  if (!normalizedIdentifier) {
+    return NextResponse.json({ ok: false, error: 'Identifier inválido', code: 'INTERNAL_ERROR' }, { status: 400 });
+  }
+
   // 3. Cliente Supabase con service_role (solo server-side, nunca llega al cliente)
   const supabase = createAdminClient();
 
@@ -98,7 +107,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
         config
       `)
       .eq('provider', provider)
-      .eq('provider_account_id', identifier)
+      .eq('provider_account_id', normalizedIdentifier)
       .eq('is_active', true)
       .single();
 

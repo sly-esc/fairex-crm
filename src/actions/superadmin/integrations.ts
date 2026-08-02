@@ -81,16 +81,18 @@ export async function saveIntegration(
   let resolvedCredentials: Record<string, unknown> | null = null;
 
   if (!existing) {
-    if (!secret) {
+    if (!secret && allowlist.credentialKey !== null) {
       return { success: false, error: 'Secreto es obligatorio para una integración nueva' };
     }
-    resolvedCredentials = encryptCredentials({ [allowlist.credentialKey]: secret });
+    resolvedCredentials = allowlist.credentialKey !== null ? encryptCredentials({ [allowlist.credentialKey]: secret }) : null;
   } else {
-    if (secret) {
+    if (secret && allowlist.credentialKey !== null) {
       resolvedCredentials = encryptCredentials({ [allowlist.credentialKey]: secret });
     } else {
       if (isEncryptedCredentialsEnvelope(existing.credentials)) {
         resolvedCredentials = existing.credentials as Record<string, unknown>;
+      } else if (allowlist.credentialKey === null) {
+        resolvedCredentials = null;
       } else {
         return { success: false, error: 'Se requiere ingresar el secreto nuevamente por motivos de seguridad' };
       }

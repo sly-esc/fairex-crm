@@ -3,7 +3,7 @@
 import { requireSuperAdmin } from '@/lib/superadmin';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isEncryptedCredentialsEnvelope } from '@/lib/integrations/encryption.server';
-import { Company, OnboardingData } from '@/types/superadmin';
+import { Company, OnboardingData, PlanType } from '@/types/superadmin';
 import { revalidatePath } from 'next/cache';
 
 // Helper for generic response
@@ -90,6 +90,63 @@ export async function updateCompanyStatus(id: string, is_active: boolean): Promi
   revalidatePath('/superadmin/companies');
   revalidatePath(`/superadmin/companies/${id}`);
 
+  return { success: true, data: undefined };
+}
+
+type UpdateCompanyInput = {
+  companyName: string;
+  slug: string;
+  industry: string;
+  plan: PlanType;
+};
+
+export async function updateCompany(companyId: string | number, data: UpdateCompanyInput): Promise<ActionResponse<void>> {
+  const auth = await requireSuperAdmin();
+  if (!auth.success) return { success: false, error: auth.error };
+
+  const parsedId = Number(companyId);
+  if (!Number.isSafeInteger(parsedId) || parsedId <= 0) {
+    return { success: false, error: 'ID de empresa inválido' };
+  }
+
+  const cleanName = data.companyName?.trim();
+  const cleanSlug = data.slug?.trim().toLowerCase();
+  const cleanIndustry = data.industry?.trim();
+
+  if (!cleanName || !cleanSlug || !/^[a-z0-9-]+$/.test(cleanSlug)) {
+    return { success: false, error: 'Datos de empresa inválidos' };
+  }
+
+  if (!['starter', 'pro', 'enterprise'].includes(data.plan)) {
+    return { success: false, error: 'Plan inválido' };
+  }
+
+  const adminClient = createAdminClient();
+  const { data: updatedCompany, error } = await adminClient
+    .from('companies')
+    .update({
+      nombre: cleanName,
+      slug: cleanSlug,
+      industry: cleanIndustry,
+      plan: data.plan,
+    })
+    .eq('id', parsedId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === '23505') {
+      return { success: false, error: 'El slug especificado ya está en uso por otra empresa' };
+    }
+    return { success: false, error: 'No se pudo actualizar la empresa' };
+  }
+
+  if (!updatedCompany) {
+    return { success: false, error: 'Empresa no encontrada' };
+  }
+
+  revalidatePath('/superadmin/companies');
+  revalidatePath(`/superadmin/companies/${parsedId}`);
   return { success: true, data: undefined };
 }
 

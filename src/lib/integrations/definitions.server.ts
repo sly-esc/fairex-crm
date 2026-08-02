@@ -2,10 +2,10 @@ import 'server-only';
 import { WizardIntegrationKey } from '@/types/superadmin';
 
 export const INTEGRATION_ALLOWLIST: Record<WizardIntegrationKey, {
-  provider: 'meta' | 'rack';
+  provider: 'meta' | 'rack' | 'ycloud';
   displayName: string;
-  connectionType: 'api_key';
-  credentialKey: string;
+  connectionType: 'api_key' | 'webhook';
+  credentialKey: string | null;
   requiresAccountId: boolean;
 }> = {
   whatsapp_official: {
@@ -28,5 +28,12 @@ export const INTEGRATION_ALLOWLIST: Record<WizardIntegrationKey, {
     connectionType: 'api_key',
     credentialKey: 'api_key',
     requiresAccountId: false,
+  },
+  ycloud_whatsapp: {
+    provider: 'ycloud',
+    displayName: 'YCloud: WhatsApp API',
+    connectionType: 'webhook',
+    credentialKey: null,
+    requiresAccountId: true,
   }
 };

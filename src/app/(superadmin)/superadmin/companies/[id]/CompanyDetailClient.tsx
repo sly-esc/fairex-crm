@@ -108,14 +108,12 @@ export default function CompanyDetailClient({ company, modules, integrations, ai
           </p>
         </div>
         <div className="flex gap-2 flex-wrap justify-end">
-          {company.onboarding_status !== 'completed' && (
-            <Link 
-              href={`/superadmin/onboarding?companyId=${company.id}`}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
-            >
-              Continuar Onboarding <ArrowRightCircle className="w-4 h-4" />
-            </Link>
-          )}
+          <Link 
+            href={`/superadmin/onboarding?companyId=${company.id}`}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
+          >
+            {company.onboarding_status === 'completed' ? 'Editar Configuración' : 'Continuar Onboarding'} <ArrowRightCircle className="w-4 h-4" />
+          </Link>
           <button 
             onClick={handleToggleStatus}
             disabled={isSaving}

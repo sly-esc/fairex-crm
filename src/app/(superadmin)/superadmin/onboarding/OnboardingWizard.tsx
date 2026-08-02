@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2, ChevronRight, UploadCloud, Building2, UserPlus, Layers, Bot, Puzzle } from 'lucide-react';
-import { createCompany, getCompanyDetail, updateCompanyStatus, updateOnboardingStatus, skipCSVAndFinishOnboarding } from '@/actions/superadmin/companies';
+import { createCompany, getCompanyDetail, updateCompanyStatus, updateOnboardingStatus, skipCSVAndFinishOnboarding, updateCompany } from '@/actions/superadmin/companies';
 import { inviteAdminUser } from '@/actions/superadmin/users';
 import { saveAllCompanyModules } from '@/actions/superadmin/modules';
 import { saveAiConfig } from '@/actions/superadmin/ai-config';
@@ -23,14 +23,20 @@ export default function OnboardingWizard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialCompanyId = searchParams.get('companyId');
+  // Permite navegación libre entre pasos cuando la empresa fue abierta desde una URL existente.
+  // No depende de companyId del estado porque una empresa recién creada en el wizard
+  // también recibe companyId pero debe conservar su flujo secuencial.
+  const canNavigateSteps = Boolean(initialCompanyId);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
   
   // State
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(!!initialCompanyId);
+  const [hasAdmin, setHasAdmin] = useState(false);
   
   // Form States
   const [companyData, setCompanyData] = useState({ name: '', slug: '', industry: '', plan: 'starter' as PlanType });
@@ -56,6 +62,7 @@ export default function OnboardingWizard() {
     whatsapp_id: '',
     whatsapp_token: '',
     whatsapp_has_credentials: false,
+    ycloud_id: '',
     facebook_page_id: '',
     facebook_token: '',
     facebook_has_credentials: false,
@@ -118,8 +125,9 @@ export default function OnboardingWizard() {
               if (int.integration_key === 'whatsapp_official') {
                 updated.whatsapp_id = int.provider_account_id || '';
                 updated.whatsapp_has_credentials = int.has_credentials || false;
-              }
-              if (int.integration_key === 'facebook_page') {
+              } else if (int.integration_key === 'ycloud_whatsapp') {
+                updated.ycloud_id = int.provider_account_id || '';
+              } else if (int.integration_key === 'facebook_page') {
                 updated.facebook_page_id = int.provider_account_id || '';
                 updated.facebook_has_credentials = int.has_credentials || false;
               }
@@ -131,9 +139,14 @@ export default function OnboardingWizard() {
           });
         }
 
+        if (data.adminAccessStatus === 'active' || data.adminAccessStatus === 'pending') {
+          setHasAdmin(true);
+        }
+
         // Inferencia del paso inicial
         if (data.onboarding_status === 'completed') {
-          router.push(`/superadmin/companies/${initialCompanyId}`);
+          setCurrentStep(1);
+          setIsEditMode(true);
           return;
         }
 
@@ -178,27 +191,44 @@ export default function OnboardingWizard() {
     setIsProcessing(true);
     setError(null);
     try {
-      const res = await createCompany({
+      const payload = {
         companyName: companyData.name,
         slug: companyData.slug,
         industry: companyData.industry,
         plan: companyData.plan,
-        adminEmail: '', // Admin is step 2
-      });
-      if (res.success && res.data) {
-        setCompanyId(res.data.id);
+      };
+
+      if (companyId) {
+        const res = await updateCompany(companyId, payload);
+        if (!res.success) {
+          setError(res.error || 'No se pudo actualizar la empresa');
+          setIsProcessing(false);
+          return;
+        }
         setCurrentStep(2);
       } else {
-        setError(res.error || 'Error desconocido al crear empresa');
+        const res = await createCompany({ ...payload, adminEmail: '' });
+        if (!res.success || !res.data) {
+          setError(res.error || 'No se pudo crear la empresa');
+          setIsProcessing(false);
+          return;
+        }
+        setCompanyId(res.data.id);
+        setCurrentStep(2);
       }
     } catch (err: any) {
-      setError(err.message);
+      setError('Ocurrió un error inesperado');
     }
     setIsProcessing(false);
   };
 
   const handleStep2Submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Protección obligatoria: en modo edición nunca se ejecuta inviteAdminUser().
+    if (isEditMode || hasAdmin) {
+      setCurrentStep(3);
+      return;
+    }
     if (!companyId) return;
     setIsProcessing(true);
     setError(null);
@@ -255,10 +285,11 @@ export default function OnboardingWizard() {
     setError(null);
     try {
       const hasWhatsapp = integrations.whatsapp_id || integrations.whatsapp_token || integrations.whatsapp_has_credentials;
+      const hasYcloud = integrations.ycloud_id;
       const hasFacebook = integrations.facebook_page_id || integrations.facebook_token || integrations.facebook_has_credentials;
       const hasRack = integrations.rack_api_key || integrations.rack_has_credentials;
 
-      if (!hasWhatsapp && !hasFacebook && !hasRack) {
+      if (!hasWhatsapp && !hasYcloud && !hasFacebook && !hasRack) {
         setError('No has llenado ninguna integración. Configura al menos una o usa "Configurar después".');
         setIsProcessing(false);
         return;
@@ -267,6 +298,13 @@ export default function OnboardingWizard() {
       if (integrations.whatsapp_id || integrations.whatsapp_token) {
         const res = await saveIntegration(Number(companyId), 'whatsapp_official', integrations.whatsapp_id, integrations.whatsapp_token);
         if (!res.success) throw new Error(`WhatsApp: ${res.error}`);
+      }
+      
+      if (integrations.ycloud_id) {
+        const normalizedYcloudId = String(integrations.ycloud_id).replace(/\D/g, '');
+        if (!normalizedYcloudId) throw new Error(`YCloud: Número receptor inválido`);
+        const res = await saveIntegration(Number(companyId), 'ycloud_whatsapp', normalizedYcloudId, '');
+        if (!res.success) throw new Error(`YCloud: ${res.error}`);
       }
       
       if (integrations.facebook_page_id || integrations.facebook_token) {
@@ -338,22 +376,43 @@ export default function OnboardingWizard() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
+      {isEditMode && (
+        <div className="bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-sm px-4 py-2 rounded-lg">
+          Modo edición — Los cambios en Módulos, IA e Integraciones se guardan de forma independiente.
+        </div>
+      )}
       {/* Stepper Header */}
       <div className="bg-zinc-900/50 border border-white/10 rounded-xl p-6 backdrop-blur-sm">
+        <h2 className="text-lg font-semibold text-white mb-6">
+          {isEditMode ? 'Editar Configuración' : companyId ? 'Continuar Onboarding' : 'Agregar Nueva Empresa'}
+        </h2>
         <nav aria-label="Progress">
           <ol role="list" className="flex items-center justify-between">
             {STEPS.map((step, stepIdx) => (
               <li key={step.title} className={stepIdx !== STEPS.length - 1 ? 'w-full pr-8 sm:pr-20' : ''}>
                 <div className="relative flex items-center">
-                  <div className={`relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 ${currentStep > step.id ? 'border-emerald-500 bg-emerald-500' : currentStep === step.id ? 'border-indigo-500 bg-[#111119]' : 'border-zinc-700 bg-zinc-900'}`}>
+                  <button
+                    type="button"
+                    onClick={() => canNavigateSteps && setCurrentStep(step.id)}
+                    disabled={!canNavigateSteps}
+                    aria-label={canNavigateSteps ? `Ir a ${step.title}` : undefined}
+                    className={`relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 ${canNavigateSteps ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400/60 transition-shadow' : 'cursor-default'} ${currentStep > step.id ? 'border-emerald-500 bg-emerald-500' : currentStep === step.id ? 'border-indigo-500 bg-[#111119]' : 'border-zinc-700 bg-zinc-900'}`}
+                  >
                     <step.icon className={`h-5 w-5 ${currentStep > step.id ? 'text-white' : currentStep === step.id ? 'text-indigo-400' : 'text-zinc-500'}`} aria-hidden="true" />
-                  </div>
+                  </button>
                   {stepIdx !== STEPS.length - 1 && (
                     <div className={`absolute top-1/2 left-10 w-[calc(100%-2.5rem)] h-0.5 -translate-y-1/2 z-0 ${currentStep > step.id ? 'bg-emerald-500' : 'bg-zinc-800'}`} />
                   )}
                 </div>
                 <div className="mt-3 hidden sm:block">
-                  <span className={`text-xs font-medium ${currentStep >= step.id ? 'text-white' : 'text-zinc-500'}`}>{step.title}</span>
+                  <button
+                    type="button"
+                    onClick={() => canNavigateSteps && setCurrentStep(step.id)}
+                    disabled={!canNavigateSteps}
+                    className={`text-xs font-medium bg-transparent border-none p-0 ${canNavigateSteps ? 'cursor-pointer hover:text-indigo-300 transition-colors' : 'cursor-default'} ${currentStep >= step.id ? 'text-white' : 'text-zinc-500'}`}
+                  >
+                    {step.title}
+                  </button>
                 </div>
               </li>
             ))}
@@ -371,26 +430,28 @@ export default function OnboardingWizard() {
       <div className="bg-zinc-900/50 border border-white/10 rounded-xl p-8 backdrop-blur-sm min-h-[400px]">
         {currentStep === 1 && (
           <form onSubmit={handleStep1Submit} className="space-y-6 max-w-xl mx-auto">
-            <h2 className="text-2xl font-bold text-white mb-6">Datos de la Empresa</h2>
+            <h2 className="text-2xl font-bold text-white mb-6">
+              Datos de la Empresa
+            </h2>
             
             <div>
               <label className="block text-sm font-medium text-zinc-300 mb-1">Nombre Comercial</label>
-              <input required type="text" value={companyData.name} onChange={e => setCompanyData({...companyData, name: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500" placeholder="Ej. Comercializadora Norte" />
+              <input required type="text" value={companyData.name} onChange={e => setCompanyData({...companyData, name: e.target.value})} className={`w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500`} placeholder="Ej. Comercializadora Norte" />
             </div>
             
             <div>
               <label className="block text-sm font-medium text-zinc-300 mb-1">Slug (URL identificador único)</label>
-              <input required type="text" value={companyData.slug} onChange={e => setCompanyData({...companyData, slug: e.target.value.toLowerCase().replace(/\s+/g, '-')})} className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono text-sm" placeholder="comercial-norte" />
+              <input required type="text" value={companyData.slug} onChange={e => setCompanyData({...companyData, slug: e.target.value.toLowerCase().replace(/\s+/g, '-')})} className={`w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none font-mono text-sm focus:border-indigo-500`} placeholder="comercial-norte" />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-zinc-300 mb-1">Industria</label>
-              <input type="text" value={companyData.industry} onChange={e => setCompanyData({...companyData, industry: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500" placeholder="Retail, Servicios, etc." />
+              <input type="text" value={companyData.industry} onChange={e => setCompanyData({...companyData, industry: e.target.value})} className={`w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500`} placeholder="Retail, Servicios, etc." />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-zinc-300 mb-1">Plan</label>
-              <select value={companyData.plan} onChange={e => setCompanyData({...companyData, plan: e.target.value as PlanType})} className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500 appearance-none">
+              <select value={companyData.plan} onChange={e => setCompanyData({...companyData, plan: e.target.value as PlanType})} className={`w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none appearance-none focus:border-indigo-500`}>
                 <option value="starter">Starter</option>
                 <option value="pro">Pro</option>
                 <option value="enterprise">Enterprise</option>
@@ -399,7 +460,7 @@ export default function OnboardingWizard() {
 
             <div className="pt-4 flex justify-end">
               <button type="submit" disabled={isProcessing} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
-                {isProcessing ? 'Guardando...' : 'Crear y Continuar'} <ChevronRight className="w-4 h-4" />
+                {isProcessing ? 'Guardando...' : companyId ? 'Guardar y Continuar' : 'Crear y Continuar'} <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </form>
@@ -407,34 +468,48 @@ export default function OnboardingWizard() {
 
         {currentStep === 2 && (
           <form onSubmit={handleStep2Submit} className="space-y-6 max-w-xl mx-auto">
-            <h2 className="text-2xl font-bold text-white mb-2">Invitar Administrador</h2>
-            <p className="text-zinc-400 text-sm mb-6">El administrador recibirá un correo de Supabase para configurar su contraseña y acceder al Dashboard.</p>
-            
-            <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-1">Nombre (Opcional)</label>
-              <input type="text" value={adminData.name} onChange={e => setAdminData({...adminData, name: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500" placeholder="Juan Pérez" />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-1">Correo Electrónico</label>
-              <input required type="email" value={adminData.email} onChange={e => setAdminData({...adminData, email: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500" placeholder="admin@empresa.com" />
-            </div>
-
-            <div className="pt-4 flex flex-col sm:flex-row justify-between items-center gap-3">
-              {/* Botón secundario: solo visible si el Wizard retomó una empresa existente */}
-              {initialCompanyId && (
-                <button
-                  type="button"
-                  onClick={() => setCurrentStep(3)}
-                  className="w-full sm:w-auto px-6 py-2 bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-zinc-300 font-medium rounded-lg transition-colors text-sm"
-                >
-                  Ya invité administrador, continuar →
-                </button>
-              )}
-              <button type="submit" disabled={isProcessing} className="w-full sm:w-auto px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
-                {isProcessing ? 'Enviando invitación...' : 'Invitar y Continuar'} <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">Administrador</h2>
+            {isEditMode || hasAdmin ? (
+              <div className="bg-zinc-800/60 border border-white/10 rounded-lg p-4 text-sm text-zinc-400 space-y-4">
+                <p>El administrador de esta empresa ya fue configurado. Para reenviar el acceso usa la sección <strong className="text-zinc-200">Acceso de Administrador</strong> en el detalle de la empresa.</p>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentStep(3)}
+                    className="px-6 py-2 bg-zinc-700 hover:bg-zinc-600 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    Continuar <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="text-zinc-400 text-sm mb-6">El administrador recibirá un correo de Supabase para configurar su contraseña y acceder al Dashboard.</p>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1">Nombre (Opcional)</label>
+                  <input type="text" value={adminData.name} onChange={e => setAdminData({...adminData, name: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500" placeholder="Juan Pérez" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1">Correo Electrónico</label>
+                  <input required type="email" value={adminData.email} onChange={e => setAdminData({...adminData, email: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500" placeholder="admin@empresa.com" />
+                </div>
+                <div className="pt-4 flex flex-col sm:flex-row justify-between items-center gap-3">
+                  {/* Botón secundario: solo visible si el Wizard retomó una empresa existente */}
+                  {initialCompanyId && (
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(3)}
+                      className="w-full sm:w-auto px-6 py-2 bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-zinc-300 font-medium rounded-lg transition-colors text-sm"
+                    >
+                      Ya invité administrador, continuar →
+                    </button>
+                  )}
+                  <button type="submit" disabled={isProcessing} className="w-full sm:w-auto px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+                    {isProcessing ? 'Enviando invitación...' : 'Invitar y Continuar'} <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </>
+            )}
           </form>
         )}
 
@@ -506,6 +581,16 @@ export default function OnboardingWizard() {
             <p className="text-zinc-400 text-sm mb-6">Conecta las cuentas clave. Los tokens quedarán encriptados y nunca llegarán al frontend del cliente.</p>
             
             <div className="space-y-6">
+              <div className="p-5 bg-black/20 border border-white/10 rounded-xl">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-md font-medium text-emerald-400 flex items-center gap-2">YCloud: WhatsApp API</h3>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">Número Receptor de WhatsApp</label>
+                  <input type="text" autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off" value={integrations.ycloud_id} onChange={e => setIntegrations({...integrations, ycloud_id: e.target.value})} placeholder="Ej: 521234567890" className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                </div>
+              </div>
+
               <div className="p-5 bg-black/20 border border-white/10 rounded-xl">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-md font-medium text-emerald-400 flex items-center gap-2">Meta: WhatsApp Business</h3>

@@ -1,5 +1,5 @@
 export type PlanType = 'starter' | 'pro' | 'enterprise';
-export type WizardIntegrationKey = 'whatsapp_official' | 'facebook_page' | 'rack_erp';
+export type WizardIntegrationKey = 'whatsapp_official' | 'facebook_page' | 'rack_erp' | 'ycloud_whatsapp';
 
 export interface Company {
   id: string;
