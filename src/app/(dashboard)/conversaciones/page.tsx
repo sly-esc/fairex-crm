@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, MoreVertical, Phone, Video, Send, Bot, User, Check, CheckCheck, Sparkles, X, MessageSquare } from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -28,6 +28,7 @@ export default function ConversacionesPage() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false)
 
   const router = useRouter()
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null)
   const { conversations, markConversationAsRead, activeConversationId: activeId, setActiveConversationId: setActiveId, addToast, _hasHydrated, toggleLeadEstado } = useAppStore()
 
   // When active conversation changes, fetch its real messages and lead memory
@@ -61,6 +62,22 @@ export default function ConversacionesPage() {
   // We only want to re-run when the active conversation ID changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, _hasHydrated])
+
+  const scrollToLatestMessage = useCallback(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+    container.scrollTop = container.scrollHeight
+  }, [])
+
+  useEffect(() => {
+    if (isLoadingMessages) return
+
+    const frame = requestAnimationFrame(() => {
+      scrollToLatestMessage()
+    })
+
+    return () => cancelAnimationFrame(frame)
+  }, [activeId, localMessages, isLoadingMessages, scrollToLatestMessage])
 
   if (!_hasHydrated) return null
 
@@ -254,7 +271,7 @@ export default function ConversacionesPage() {
         </div>
 
         {/* Chat Messages */}
-        <div className="flex-1 p-6 overflow-y-auto custom-scrollbar flex flex-col-reverse">
+        <div ref={messagesContainerRef} className="flex-1 p-6 overflow-y-auto custom-scrollbar flex flex-col">
           <div className="space-y-6">
             <AnimatePresence mode="wait">
               {isLoadingMessages ? (

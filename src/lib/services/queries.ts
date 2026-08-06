@@ -105,7 +105,7 @@ export async function getLeadsData() {
     .from('lead_memory')
     .select('*')
     .eq('company_id', companyId)
-    .order('created_at', { ascending: false })
+    .order('ultimo_contacto', { ascending: false, nullsFirst: false })
 
   if (error) {
     console.error('Error fetching leads:', error)
@@ -162,10 +162,12 @@ export async function getChatHistory(numero: string) {
   const supabase = await createClient()
   const companyId = await requireUserCompanyId(supabase)
 
+  const compoundSessionId = `${companyId}:${numero}`
+
   const { data, error } = await supabase
     .from('n8n_chat_histories')
     .select('*')
-    .eq('session_id', numero)
+    .in('session_id', [compoundSessionId, numero])
     .eq('company_id', companyId)
     .order('id', { ascending: true })
 
@@ -177,17 +179,18 @@ export async function getChatHistory(numero: string) {
   return (data || []).map((row: any) => {
     const msgType: string = row.message?.type || 'human'
     let text = ''
+    
+    const content = row.message?.content || ''
 
     if (msgType === 'ai') {
-      // AI messages from n8n may store a JSON string inside content
       try {
-        const parsed = JSON.parse(row.message.content)
-        text = parsed.respuesta || parsed.content || row.message.content
+        const parsed = JSON.parse(content)
+        text = parsed.respuesta || parsed.content || content
       } catch {
-        text = row.message.content || ''
+        text = content
       }
     } else {
-      text = row.message?.content || ''
+      text = content
     }
 
     return {
