@@ -1,0 +1,43 @@
+# AUDITORÍA TÉCNICA: Contexto Empresarial Dinámico
+
+A continuación se presenta el diagnóstico técnico estático, basado exclusivamente en lectura del código fuente y el esquema de base de datos del proyecto, validando el estado actual de los componentes, la seguridad multi-tenant y la estructura para la integración con n8n.
+
+## 1. ESQUEMA DE DATOS Y CONFIGURACIÓN IA ACTUAL
+
+*   **Tabla Base:** La configuración de IA reside en `public.company_settings` (creada en `0001_fairex_v2_init.sql` y expandida en `migration_phase_10_company_settings.sql`).
+*   **Estructura Actual:** La Fase 10 definió las columnas `ai_identity`, `ai_business_rules`, `ai_commercial_style`, `ai_constraints` (TEXT) y `ai_knowledge_sources` (JSONB).
+*   **Manejo de IDs:** Existe una discrepancia de tipos en las migraciones de repositorio (`company_id` como `UUID` en la init vs `BIGINT` en la Fase 9 y 10). Dado que los datos reales usan `company_id = 1`, la tabla real en Supabase opera con enteros/BIGINT.
+*   **Inventario / Productos:** La tabla `public.products` (creada en la Fase 9) es la única fuente de verdad para el inventario. Contiene: `sku`, `name`, `description`, `price`, `cost_price`, `stock`, `category`, etc. **Confirmación:** Los precios, stock y SKUs NO deben incluirse en la configuración estática de IA; n8n o la BD deberán resolver el inventario de forma dinámica usando `products`.
+
+## 2. ESTADO DEL DASHBOARD DEL CLIENTE Y SUPER ADMIN
+
+*   **Super Admin:** La configuración de IA es totalmente editable por el equipo interno a través de las rutas de superadmin (`/superadmin/onboarding` y `/superadmin/companies/[id]`). Usa el Server Action `src/actions/superadmin/ai-config.ts`.
+*   **Dashboard del Cliente (`/settings`):** En `src/app/(dashboard)/settings/page.tsx`, la sección de "Ajustes IA" es actualmente un **placeholder bloqueado** con el mensaje *"Configuración Avanzada de IA / Administrado por FAIREX"*.
+*   **Conclusión:** El cliente actualmente solo puede editar el nombre, sitio web y dirección genérica. No tiene acceso a modificar las reglas de negocio, horarios, políticas, etc.
+
+## 3. ENDPOINT `/api/n8n/context` Y CONTRATOS DE TIPOS
+
+*   **Endpoint (`route.ts`):** Ya consulta `company_settings` en paralelo usando `Promise.all` e inyecta los 5 campos de IA (identity, business_rules, commercial_style, constraints, knowledge_sources) en el bloque `runtime.ai`.
+*   **Contrato (`types/n8n-context.ts`):** La interfaz `RuntimeAI` de `N8NRuntimeObject` define rígidamente estos 5 campos. No existe un bloque para datos estructurados de la empresa (horarios, ubicación, métodos de pago, etc.).
+*   **Conclusión:** Para inyectar contexto de negocio estructurado, será necesario modificar tanto el endpoint como la interfaz `N8NRuntimeObject`.
+
+## 4. HALLAZGOS CRÍTICOS DE MULTI-TENANCY E ISLAMIENTO (FALLBACKS)
+
+Se detectó una brecha potencial de fuga de datos o fallbacks inseguros en el archivo **`src/lib/services/queries.ts`**:
+
+1.  **Hardcodeo de company_id = 1:** La función `getUserCompanyId` contiene lógica de fallback insegura:
+    *   `if (!user) { return 1 // Fallback para desarrollo o sesiones muertas }`
+    *   `if (error || !data) { return 1 // Fallback si no existe perfil aún }`
+    *   `const resolvedId = data.company_id || 1`
+2.  **Tabla errónea:** Dicha función consulta la tabla `profiles` (`.from('profiles').select('company_id')`), la cual no existe en las migraciones auditadas (la tabla base es `user_profiles` y el vínculo multi-tenant correcto es `company_members`).
+
+> **ALERTA CRÍTICA:** Estas funciones (`getUserCompanyId`, `getLeadMemoryTest`) no deben usarse en producción sin corregir el fallback. De lo contrario, los usuarios sin sesión o los errores de consulta filtrarán los leads o configuraciones de la empresa `ID 1` (Super Admin).
+
+## 5. RECOMENDACIÓN ESTRATÉGICA PARA EL "CONTEXTO EMPRESARIAL"
+
+Para añadir: *ubicación, horarios, pagos, políticas de entrega, proceso de compra, FAQs y reglas de derivación*, sin saturar la tabla con decenas de columnas de texto:
+
+1.  **Esquema de Base de Datos:** Agregar una columna **`business_profile` (JSONB)** a la tabla `company_settings`. Esto permite agrupar todo el contexto comercial de forma estructurada sin alterar el modelo relacional actual.
+2.  **Contrato N8N:** Añadir un nuevo bloque `business` al `N8NRuntimeObject` (ej. `runtime.business`) que exponga directamente este objeto JSON hacia n8n.
+3.  **Dashboard del Cliente:** Crear una nueva pestaña o desbloquear una sección en `/settings` (o una nueva ruta `/settings/business`) donde el cliente pueda rellenar campos específicos mediante un formulario reactivo que actualice `company_settings.business_profile`.
+4.  **Aislamiento de IA Base:** Mantener `ai_identity` y `ai_constraints` (el comportamiento central del agente) restringidos y administrados por FAIREX (Super Admin), pero permitir al cliente alimentar los *hechos* de su negocio (políticas, horarios) a través del nuevo `business_profile`.

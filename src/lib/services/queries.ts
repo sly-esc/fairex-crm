@@ -4,6 +4,13 @@ import { createClient } from '../supabase/server'
 
 // --- Helpers ---
 
+class AuthError extends Error {
+  constructor(message: 'NO_SESSION' | 'PROFILE_NOT_FOUND' | 'INVALID_COMPANY_ID' | 'PROFILE_QUERY_FAILED') {
+    super(message)
+    this.name = 'AuthError'
+  }
+}
+
 /**
  * Normalizes stage names. Converts legacy values like "contacto_inicial"
  * to "Nuevo" without touching the database.
@@ -16,17 +23,15 @@ function normalizeStage(raw: string): string {
 }
 
 /**
- * Retrieves the current user's company_id from the profiles table.
- * Defaults to 1 if no profile is found or if error.
+ * Retrieves the current user's company_id from the profiles table securely.
+ * Throws an AuthError if validation fails.
  */
-async function getUserCompanyId(supabase: any) {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    console.log('[BLOQUE3_DIAG] ❌ Sin sesión activa — usando fallback company_id=1')
-    return 1 // Fallback para desarrollo o sesiones muertas
+async function requireUserCompanyId(supabase: any): Promise<number> {
+  const { data: { user }, error: userError } = await supabase.auth.getUser()
+  if (userError || !user) {
+    console.warn('[AUTH] Ausencia de sesión')
+    throw new AuthError('NO_SESSION')
   }
-
-  console.log('[BLOQUE3_DIAG] 🔍 Buscando perfil para auth_user_id:', user.id, '| email:', user.email)
 
   const { data, error } = await supabase
     .from('profiles')
@@ -34,22 +39,30 @@ async function getUserCompanyId(supabase: any) {
     .eq('auth_user_id', user.id)
     .single()
 
-  if (error || !data) {
-    console.log('[BLOQUE3_DIAG] ❌ Perfil no encontrado — usando fallback company_id=1 | error:', error?.message)
-    return 1 // Fallback si no existe perfil aún
+  if (error) {
+    console.error('[AUTH] Error al consultar perfil:', error.message)
+    throw new AuthError('PROFILE_QUERY_FAILED')
   }
 
-  const resolvedId = data.company_id || 1
-  const source = data.company_id ? '✅ BASE DE DATOS (profiles.auth_user_id)' : '⚠️ Fallback (company_id null en perfil)'
-  console.log(`[BLOQUE3_DIAG] ${source} → company_id resuelto: ${resolvedId}`)
-  return resolvedId
+  if (!data) {
+    console.warn('[AUTH] Perfil no encontrado')
+    throw new AuthError('PROFILE_NOT_FOUND')
+  }
+
+  const companyId = Number(data.company_id)
+  if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+    console.error('[AUTH] company_id inválido:', data.company_id)
+    throw new AuthError('INVALID_COMPANY_ID')
+  }
+
+  return companyId
 }
 
 // --- Server Actions ---
 
 export async function getLeadMemoryTest() {
   const supabase = await createClient()
-  const companyId = await getUserCompanyId(supabase)
+  const companyId = await requireUserCompanyId(supabase)
 
   // Consulta de solo lectura para obtener datos de lead_memory
   const { data, error } = await supabase
@@ -68,7 +81,7 @@ export async function getLeadMemoryTest() {
 
 export async function updateLeadEstado(id: string, estado: 'ACTIVO' | 'EXCLUIR') {
   const supabase = await createClient()
-  const companyId = await getUserCompanyId(supabase)
+  const companyId = await requireUserCompanyId(supabase)
 
   const { data, error } = await supabase
     .from('lead_memory')
@@ -86,7 +99,7 @@ export async function updateLeadEstado(id: string, estado: 'ACTIVO' | 'EXCLUIR')
 
 export async function getLeadsData() {
   const supabase = await createClient()
-  const companyId = await getUserCompanyId(supabase)
+  const companyId = await requireUserCompanyId(supabase)
 
   const { data, error } = await supabase
     .from('lead_memory')
@@ -147,7 +160,7 @@ export async function getLeadsData() {
  */
 export async function getChatHistory(numero: string) {
   const supabase = await createClient()
-  const companyId = await getUserCompanyId(supabase)
+  const companyId = await requireUserCompanyId(supabase)
 
   const { data, error } = await supabase
     .from('n8n_chat_histories')
@@ -193,7 +206,7 @@ export async function getChatHistory(numero: string) {
  */
 export async function getLeadMemory(id: string) {
   const supabase = await createClient()
-  const companyId = await getUserCompanyId(supabase)
+  const companyId = await requireUserCompanyId(supabase)
 
   const { data, error } = await supabase
     .from('lead_memory')
