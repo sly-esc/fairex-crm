@@ -122,6 +122,79 @@ export interface RuntimeMetrics {
   quota_remaining?: number;
 }
 
+// -------------------------------------------------------------------------------------
+// BLOQUE DE NEGOCIO: Datos del perfil empresarial editables por el cliente
+// -------------------------------------------------------------------------------------
+
+/**
+ * Horario de atención por día de la semana.
+ * Los valores open/close están en formato HH:MM (24h).
+ */
+export interface BusinessHoursEntry {
+  day: string;      // e.g. 'Lunes', 'Martes'
+  open: string;     // e.g. '09:00'
+  close: string;    // e.g. '18:00'
+  is_open: boolean;
+}
+
+/**
+ * Pregunta frecuente del negocio.
+ */
+export interface BusinessFAQ {
+  question: string;
+  answer: string;
+}
+
+/**
+ * Perfil del negocio editable por el cliente desde su dashboard.
+ * Alimenta el contexto del agente IA en cada conversación.
+ * NUNCA contiene precios de servicios ni credenciales.
+ */
+export interface RuntimeBusiness {
+  business_name: string | null;
+  description: string | null;
+  address: string | null;
+  service_areas: string[];
+  business_hours: BusinessHoursEntry[];
+  phones: string[];
+  emails: string[];
+  website: string | null;
+  payment_methods: string[];
+  purchase_process: string | null;
+  policies: string | null;
+  faqs: BusinessFAQ[];
+  human_handoff: string | null;
+  additional_information: string | null;
+}
+
+// -------------------------------------------------------------------------------------
+// BLOQUE DE SERVICIOS: Catálogo activo de la empresa
+// -------------------------------------------------------------------------------------
+
+/**
+ * Servicio individual del catálogo de la empresa.
+ * metadata puede contener información comercial adicional estructurada
+ * (ej: mantenimiento mensual, presupuesto inicial, etc.).
+ */
+export interface RuntimeService {
+  id: string;                                        // UUID
+  name: string;
+  description: string | null;
+  price: number | null;                              // null si no aplica o es por cotizar
+  currency: string;                                  // ISO 4217 tal como está en DB; no se infiere
+  price_type: 'fixed' | 'from' | 'quote' | 'free';
+  category: string | null;
+  is_active: boolean;
+  metadata: Record<string, unknown>;                 // Preservar íntegro desde la DB
+}
+
+/**
+ * Bloque de servicios activos de la empresa.
+ */
+export interface RuntimeServices {
+  items: RuntimeService[];
+}
+
 /**
  * Objeto Runtime completo. Este es el contrato entre Next.js y n8n.
  * n8n debe tratar este objeto como inmutable durante la ejecución del workflow.
@@ -135,6 +208,10 @@ export interface N8NRuntimeObject {
   customer: RuntimeCustomer;
   /** Configuración de IA cargada desde company_settings */
   ai: RuntimeAI;
+  /** Perfil de negocio editable por el cliente (desde company_settings.business_profile) */
+  business: RuntimeBusiness;
+  /** Catálogo de servicios activos de la empresa (desde company_services) */
+  services: RuntimeServices;
   /** Módulos activos y su configuración */
   modules: RuntimeModules;
   /** Métricas y cuotas (V1: vacío) */

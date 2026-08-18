@@ -19,6 +19,10 @@ import type {
   N8NContextResponse,
   N8NRuntimeObject,
   RuntimeModules,
+  RuntimeBusiness,
+  RuntimeService,
+  BusinessHoursEntry,
+  BusinessFAQ,
 } from '@/types/n8n-context';
 
 // -------------------------------------------------------------------------------------
@@ -129,7 +133,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
     // Usamos Promise.all para minimizar latencia total.
     // NUNCA hacemos escrituras aquí.
     // ─────────────────────────────────────────────────────────────────────────────
-    const [companyResult, settingsResult, modulesResult] = await Promise.all([
+    const [companyResult, settingsResult, modulesResult, servicesResult] = await Promise.all([
       // 2a. Datos base de la empresa
       supabase
         .from('companies')
@@ -137,10 +141,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
         .eq('id', company_id)
         .single(),
 
-      // 2b. Configuración de IA (runtime blocks)
+      // 2b. Configuración de IA + perfil de negocio
       supabase
         .from('company_settings')
-        .select('ai_identity, ai_business_rules, ai_commercial_style, ai_constraints, ai_knowledge_sources')
+        .select('ai_identity, ai_business_rules, ai_commercial_style, ai_constraints, ai_knowledge_sources, business_profile')
         .eq('company_id', company_id)
         .maybeSingle(),
 
@@ -150,6 +154,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
         .select('module_key, is_active, config')
         .eq('company_id', company_id)
         .eq('is_active', true),
+
+      // 2d. Catálogo de servicios activos
+      // IMPORTANTE: filtra exclusivamente por el company_id resuelto en PASO 1.
+      // Nunca se usa un company_id proveniente del request.
+      supabase
+        .from('company_services')
+        .select('id, name, description, price, currency, price_type, category, is_active, metadata')
+        .eq('company_id', company_id)
+        .eq('is_active', true)
+        .order('name', { ascending: true }),
     ]);
 
     // Verificar empresa
@@ -173,6 +187,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
     const settings = settingsResult.data ?? null;
     const moduleRows = modulesResult.data ?? [];
 
+    // Verificar que la query de servicios no haya fallado.
+    // Un error real (permisos, tabla inexistente, etc.) se propaga como error del runtime.
+    // Una lista vacía es válida y no es un error.
+    if (servicesResult.error) {
+      console.error('[n8n/context] Error al obtener company_services:', servicesResult.error.message);
+      return NextResponse.json(
+        { ok: false, error: 'Error al resolver servicios de la empresa', code: 'INTERNAL_ERROR' },
+        { status: 500 }
+      );
+    }
+    const serviceRows = servicesResult.data ?? [];
+
     // ─────────────────────────────────────────────────────────────────────────────
     // PASO 3: Construcción del Runtime Object
     // Mapeamos la data de Supabase al contrato estricto de N8NRuntimeObject.
@@ -183,6 +209,71 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
     for (const mod of moduleRows) {
       modulesConfig[mod.module_key] = mod.config as Record<string, unknown>;
     }
+
+    // ---------------------------------------------------------------------------------
+    // Normalizar business_profile con defaults seguros y validación profunda de arrays.
+    // ---------------------------------------------------------------------------------
+    const rawProfile = (settings?.business_profile ?? {}) as Record<string, unknown>;
+
+    const normalizeStringArray = (value: unknown): string[] =>
+      Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+
+    const normalizeBusinessHours = (value: unknown): BusinessHoursEntry[] => {
+      if (!Array.isArray(value)) return [];
+      return value.filter((item): item is BusinessHoursEntry =>
+        item !== null &&
+        typeof item === 'object' &&
+        typeof (item as Record<string, unknown>).day === 'string' &&
+        typeof (item as Record<string, unknown>).open === 'string' &&
+        typeof (item as Record<string, unknown>).close === 'string' &&
+        typeof (item as Record<string, unknown>).is_open === 'boolean'
+      );
+    };
+
+    const normalizeFaqs = (value: unknown): BusinessFAQ[] => {
+      if (!Array.isArray(value)) return [];
+      return value.filter((item): item is BusinessFAQ =>
+        item !== null &&
+        typeof item === 'object' &&
+        typeof (item as Record<string, unknown>).question === 'string' &&
+        typeof (item as Record<string, unknown>).answer === 'string'
+      );
+    };
+
+    const business: RuntimeBusiness = {
+      business_name:          typeof rawProfile.business_name === 'string'     ? rawProfile.business_name          : null,
+      description:            typeof rawProfile.description === 'string'       ? rawProfile.description             : null,
+      address:                typeof rawProfile.address === 'string'           ? rawProfile.address                 : null,
+      service_areas:          normalizeStringArray(rawProfile.service_areas),
+      business_hours:         normalizeBusinessHours(rawProfile.business_hours),
+      phones:                 normalizeStringArray(rawProfile.phones),
+      emails:                 normalizeStringArray(rawProfile.emails),
+      website:                typeof rawProfile.website === 'string'          ? rawProfile.website                 : null,
+      payment_methods:        normalizeStringArray(rawProfile.payment_methods),
+      purchase_process:       typeof rawProfile.purchase_process === 'string' ? rawProfile.purchase_process        : null,
+      policies:               typeof rawProfile.policies === 'string'         ? rawProfile.policies                : null,
+      faqs:                   normalizeFaqs(rawProfile.faqs),
+      human_handoff:          typeof rawProfile.human_handoff === 'string'    ? rawProfile.human_handoff           : null,
+      additional_information: typeof rawProfile.additional_information === 'string' ? rawProfile.additional_information : null,
+    };
+
+    // ---------------------------------------------------------------------------------
+    // Normalizar servicios.
+    // price: number | null  (no se inventa precio si la DB tiene NULL).
+    // metadata: preservado íntegro, incluyendo objetos de información comercial.
+    // price_type: se conserva tal cual desde la DB, sin transformar.
+    // ---------------------------------------------------------------------------------
+    const serviceItems: RuntimeService[] = serviceRows.map((row) => ({
+      id:          row.id as string,
+      name:        row.name as string,
+      description: typeof row.description === 'string' ? row.description : null,
+      price:       row.price != null ? Number(row.price) : null,
+      currency:    row.currency as string,
+      price_type:  row.price_type as RuntimeService['price_type'],
+      category:    typeof row.category === 'string' ? row.category : null,
+      is_active:   Boolean(row.is_active),
+      metadata:    (row.metadata ?? {}) as Record<string, unknown>,
+    }));
 
     const runtime: N8NRuntimeObject = {
       context: {
@@ -212,6 +303,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<N8NContextRes
         commercial_style: settings?.ai_commercial_style ?? null,
         constraints: settings?.ai_constraints ?? null,
         knowledge_sources: settings?.ai_knowledge_sources ?? [],
+      },
+      business,
+      services: {
+        items: serviceItems,
       },
       modules: {
         active: moduleRows.map((m) => m.module_key),
