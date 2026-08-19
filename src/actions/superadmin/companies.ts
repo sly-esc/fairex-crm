@@ -33,13 +33,17 @@ export async function createCompany(data: OnboardingData): Promise<ActionRespons
     return { success: false, error: companyError.message };
   }
 
-  // Crear la configuración inicial de IA vacía/default
-  await adminClient
+  // Crear la configuración inicial
+  const { error: settingsError } = await adminClient
     .from('company_settings')
     .insert({
-      company_id: newCompany.id,
-      ai_config: { tone: "profesional", auto_response: true }
+      company_id: newCompany.id
     });
+
+  if (settingsError) {
+    console.error(`Error creating company_settings for company ${newCompany.id}:`, settingsError);
+    return { success: false, error: 'Error al inicializar la configuración de la empresa' };
+  }
 
   revalidatePath('/superadmin/companies');
 
