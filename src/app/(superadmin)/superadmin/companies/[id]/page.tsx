@@ -1,4 +1,6 @@
 import { getCompanyDetail } from "@/actions/superadmin/companies";
+import { getBusinessProfileAdmin } from "@/actions/superadmin/business-profile";
+import { getServicesAdmin } from "@/actions/superadmin/services";
 import { notFound } from "next/navigation";
 import CompanyDetailClient from "./CompanyDetailClient";
 
@@ -9,18 +11,21 @@ interface PageProps {
 }
 
 export default async function CompanyDetailPage({ params }: PageProps) {
-  // En Next.js 15, params es una Promise
   const resolvedParams = await params;
   const { id } = resolvedParams;
 
-  const { success, data, error } = await getCompanyDetail(id);
+  const [detailResult, profileResult, servicesResult] = await Promise.all([
+    getCompanyDetail(id),
+    getBusinessProfileAdmin(id),
+    getServicesAdmin(id),
+  ]);
 
-  if (!success || !data) {
-    console.error(`[CompanyDetailPage] Could not load company id=${id}. Error: ${error}`);
+  if (!detailResult.success || !detailResult.data) {
+    console.error(`[CompanyDetailPage] Could not load company id=${id}. Error: ${detailResult.error}`);
     notFound();
   }
 
-  const { company_settings, company_modules, company_integrations, ...company } = data;
+  const { company_settings, company_modules, company_integrations, ...company } = detailResult.data;
 
   // Extraer ai_config de company_settings, asumiendo un solo setting por empresa
   const aiConfig = company_settings && company_settings.length > 0 
@@ -40,6 +45,8 @@ export default async function CompanyDetailPage({ params }: PageProps) {
       integrations={company_integrations || []} 
       aiConfig={aiConfig} 
       adminAccessStatus={company.adminAccessStatus}
+      initialBusinessProfile={profileResult.data ?? {}}
+      initialServices={servicesResult.data ?? []}
     />
   );
 }

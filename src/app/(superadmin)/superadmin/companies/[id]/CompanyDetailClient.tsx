@@ -1,10 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Company, CompanyModule, CompanyIntegration, AiConfig } from '@/types/superadmin';
 import { Save, CheckCircle2, XCircle, ArrowRightCircle, UploadCloud } from 'lucide-react';
 import { updateCompanyStatus } from '@/actions/superadmin/companies';
+import { saveBusinessProfileAdmin } from '@/actions/superadmin/business-profile';
+import { createServiceAdmin, updateServiceAdmin, toggleServiceStatusAdmin } from '@/actions/superadmin/services';
+import BusinessProfileForm from '@/components/domain/BusinessProfileForm';
+import ServicesManager from '@/components/domain/ServicesManager';
+import type { BusinessProfileInput, ServiceInput, CompanyServiceRow } from '@/types/business';
 
 interface CompanyDetailClientProps {
   company: Company;
@@ -12,9 +18,12 @@ interface CompanyDetailClientProps {
   integrations: CompanyIntegration[];
   aiConfig: AiConfig;
   adminAccessStatus?: 'pending' | 'active' | 'missing' | 'ambiguous';
+  initialBusinessProfile: Partial<BusinessProfileInput>;
+  initialServices: CompanyServiceRow[];
 }
 
-export default function CompanyDetailClient({ company, modules, integrations, aiConfig, adminAccessStatus }: CompanyDetailClientProps) {
+export default function CompanyDetailClient({ company, modules, integrations, aiConfig, adminAccessStatus, initialBusinessProfile, initialServices }: CompanyDetailClientProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState('general');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -125,18 +134,20 @@ export default function CompanyDetailClient({ company, modules, integrations, ai
       </div>
 
       {/* Tabs Nav */}
-      <div className="flex border-b border-white/10">
+      <div className="flex border-b border-white/10 overflow-x-auto">
         {[
           { id: 'general', label: 'General' },
           { id: 'modules', label: 'Módulos' },
           { id: 'ai', label: 'Inteligencia Artificial' },
           { id: 'integrations', label: 'Integraciones' },
           { id: 'inventory', label: 'Inventario' },
+          { id: 'business', label: 'Negocio' },
+          { id: 'services', label: 'Servicios' },
         ].map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.id ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5' : 'border-transparent text-zinc-400 hover:text-zinc-300 hover:bg-white/5'}`}
+            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.id ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5' : 'border-transparent text-zinc-400 hover:text-zinc-300 hover:bg-white/5'}`}
           >
             {tab.label}
           </button>
@@ -329,6 +340,44 @@ export default function CompanyDetailClient({ company, modules, integrations, ai
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {activeTab === 'business' && (
+          <div>
+            <h3 className="text-lg font-medium text-white mb-4">Perfil del Negocio</h3>
+            <BusinessProfileForm
+              initialData={initialBusinessProfile}
+              onSubmit={async (data: BusinessProfileInput) => {
+                const result = await saveBusinessProfileAdmin(String(company.id), data);
+                if (result.success) router.refresh();
+                return result;
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'services' && (
+          <div>
+            <h3 className="text-lg font-medium text-white mb-4">Servicios y Precios</h3>
+            <ServicesManager
+              services={initialServices}
+              onCreate={(input: ServiceInput) => {
+                const result = createServiceAdmin(String(company.id), input);
+                result.then((r) => { if (r.success) router.refresh(); });
+                return result;
+              }}
+              onUpdate={(serviceId: string, input: ServiceInput) => {
+                const result = updateServiceAdmin(String(company.id), serviceId, input);
+                result.then((r) => { if (r.success) router.refresh(); });
+                return result;
+              }}
+              onToggle={(serviceId: string, isActive: boolean) => {
+                const result = toggleServiceStatusAdmin(String(company.id), serviceId, isActive);
+                result.then((r) => { if (r.success) router.refresh(); });
+                return result;
+              }}
+            />
           </div>
         )}
       </div>
