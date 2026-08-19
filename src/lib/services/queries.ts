@@ -26,7 +26,7 @@ function normalizeStage(raw: string): string {
  * Retrieves the current user's company_id from the profiles table securely.
  * Throws an AuthError if validation fails.
  */
-async function requireUserCompanyId(supabase: any): Promise<number> {
+export async function requireUserCompanyId(supabase: any): Promise<number> {
   const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (userError || !user) {
     console.warn('[AUTH] Ausencia de sesión')
