@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireUserCompanyId } from "@/lib/services/queries";
 import { productInputSchema, ProductInput, PaginatedProducts, GetProductsParams, ProductRow } from "@/types/products";
+import { sanitizeSearchQuery } from "@/lib/inventory/search-sanitize";
 
 export async function getProducts(params: GetProductsParams = {}): Promise<{ success: boolean; data?: PaginatedProducts; error?: string }> {
   try {
@@ -20,10 +21,7 @@ export async function getProducts(params: GetProductsParams = {}): Promise<{ suc
 
     if (params.search) {
       // Búsqueda sanitizada para evitar PostgREST injection
-      const safeSearch = params.search
-        .replace(/[,()"%*]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+      const safeSearch = sanitizeSearchQuery(params.search);
         
       if (safeSearch) {
         query = query.or(`name.ilike.%${safeSearch}%,sku.ilike.%${safeSearch}%`);
