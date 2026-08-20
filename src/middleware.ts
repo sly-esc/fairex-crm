@@ -6,7 +6,8 @@ export async function middleware(request: NextRequest) {
   // n8n no tiene cookie de sesión de Supabase — no debe ser redirigido a /login.
   if (
     request.nextUrl.pathname === '/api/n8n/context' ||
-    request.nextUrl.pathname === '/api/n8n/inventory-search'
+    request.nextUrl.pathname === '/api/n8n/inventory-search' ||
+    request.nextUrl.pathname === '/api/n8n/payment-info'
   ) {
     return NextResponse.next();
   }
