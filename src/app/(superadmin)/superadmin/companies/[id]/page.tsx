@@ -1,6 +1,7 @@
 import { getCompanyDetail } from "@/actions/superadmin/companies";
 import { getBusinessProfileAdmin } from "@/actions/superadmin/business-profile";
 import { getServicesAdmin } from "@/actions/superadmin/services";
+import { getPaymentSettingsAdmin } from "@/actions/superadmin/payment-settings";
 import { notFound } from "next/navigation";
 import CompanyDetailClient from "./CompanyDetailClient";
 
@@ -14,10 +15,15 @@ export default async function CompanyDetailPage({ params }: PageProps) {
   const resolvedParams = await params;
   const { id } = resolvedParams;
 
-  const [detailResult, profileResult, servicesResult] = await Promise.all([
+  const numericId = Number(id);
+
+  const [detailResult, profileResult, servicesResult, paymentResult] = await Promise.all([
     getCompanyDetail(id),
     getBusinessProfileAdmin(id),
     getServicesAdmin(id),
+    Number.isSafeInteger(numericId) && numericId > 0
+      ? getPaymentSettingsAdmin(numericId)
+      : Promise.resolve({ success: true, data: null }),
   ]);
 
   if (!detailResult.success || !detailResult.data) {
@@ -47,6 +53,7 @@ export default async function CompanyDetailPage({ params }: PageProps) {
       adminAccessStatus={company.adminAccessStatus}
       initialBusinessProfile={profileResult.data ?? {}}
       initialServices={servicesResult.data ?? []}
+      initialPaymentSettings={paymentResult.data ?? null}
     />
   );
 }

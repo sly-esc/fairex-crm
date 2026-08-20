@@ -13,7 +13,10 @@ import BusinessProfileForm from '@/components/domain/BusinessProfileForm';
 import ServicesManager from '@/components/domain/ServicesManager';
 import ProductsManager from '@/components/domain/ProductsManager';
 import InventoryCsvImporter from '@/components/domain/InventoryCsvImporter';
+import PaymentSettingsForm from '@/components/domain/PaymentSettingsForm';
+import { upsertPaymentSettingsAdmin } from '@/actions/superadmin/payment-settings';
 import type { BusinessProfileInput, ServiceInput, CompanyServiceRow } from '@/types/business';
+import type { PaymentSettingsInput, PaymentSettings } from '@/types/payments';
 
 interface CompanyDetailClientProps {
   company: Company;
@@ -23,9 +26,10 @@ interface CompanyDetailClientProps {
   adminAccessStatus?: 'pending' | 'active' | 'missing' | 'ambiguous';
   initialBusinessProfile: Partial<BusinessProfileInput>;
   initialServices: CompanyServiceRow[];
+  initialPaymentSettings: PaymentSettings | null;
 }
 
-export default function CompanyDetailClient({ company, modules, integrations, aiConfig, adminAccessStatus, initialBusinessProfile, initialServices }: CompanyDetailClientProps) {
+export default function CompanyDetailClient({ company, modules, integrations, aiConfig, adminAccessStatus, initialBusinessProfile, initialServices, initialPaymentSettings }: CompanyDetailClientProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('general');
   const [isSaving, setIsSaving] = useState(false);
@@ -106,6 +110,7 @@ export default function CompanyDetailClient({ company, modules, integrations, ai
           { id: 'inventory', label: 'Inventario' },
           { id: 'business', label: 'Negocio' },
           { id: 'services', label: 'Servicios' },
+          { id: 'payments', label: 'Pagos' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -281,6 +286,20 @@ export default function CompanyDetailClient({ company, modules, integrations, ai
               onToggle={(serviceId: string, isActive: boolean) => {
                 const result = toggleServiceStatusAdmin(String(company.id), serviceId, isActive);
                 result.then((r) => { if (r.success) router.refresh(); });
+                return result;
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'payments' && (
+          <div>
+            <h3 className="text-lg font-medium text-white mb-4">Configuración de Cobro</h3>
+            <PaymentSettingsForm
+              initialData={initialPaymentSettings ?? null}
+              onSubmit={async (data: PaymentSettingsInput) => {
+                const result = await upsertPaymentSettingsAdmin(Number(company.id), data);
+                if (result.success) router.refresh();
                 return result;
               }}
             />

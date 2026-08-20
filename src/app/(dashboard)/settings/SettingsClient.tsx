@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Building2, Palette, Brain, Link as LinkIcon, Save, Database, Workflow, MessageCircle, Lock, Headset, Briefcase, Layers } from 'lucide-react'
+import { Building2, Palette, Brain, Link as LinkIcon, Save, Database, Workflow, MessageCircle, Lock, Headset, Briefcase, Layers, CreditCard } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,17 +13,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAppStore } from '@/lib/store'
 import BusinessProfileForm from '@/components/domain/BusinessProfileForm'
 import ServicesManager from '@/components/domain/ServicesManager'
+import PaymentSettingsForm from '@/components/domain/PaymentSettingsForm'
 import { updateBusinessProfile } from '@/actions/dashboard/business-profile'
 import { createService, updateService, toggleServiceStatus } from '@/actions/dashboard/services'
+import { upsertPaymentSettings } from '@/actions/dashboard/payment-settings'
 import type { BusinessProfileInput, CompanyServiceRow } from '@/types/business'
 import type { ServiceInput } from '@/types/business'
+import type { PaymentSettingsInput, PaymentSettingsRow } from '@/types/payments'
 
 interface SettingsClientProps {
   initialBusinessProfile: Partial<BusinessProfileInput>
   initialServices: CompanyServiceRow[]
+  initialPaymentSettings: PaymentSettingsRow | null
 }
 
-export default function SettingsClient({ initialBusinessProfile, initialServices }: SettingsClientProps) {
+export default function SettingsClient({ initialBusinessProfile, initialServices, initialPaymentSettings }: SettingsClientProps) {
   const router = useRouter()
   const { addToast, branding, updateBranding, company, updateCompany } = useAppStore()
   const [isSaving, setIsSaving] = useState(false)
@@ -85,6 +89,13 @@ export default function SettingsClient({ initialBusinessProfile, initialServices
     return result
   }
 
+  // ─── Payment Settings handler ─────────────────────────────────────────────
+  const handlePaymentSettingsSubmit = async (data: PaymentSettingsInput) => {
+    const result = await upsertPaymentSettings(data)
+    if (result.success) router.refresh()
+    return result
+  }
+
   return (
     <div className="space-y-8 max-w-5xl mx-auto pb-10">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -122,6 +133,9 @@ export default function SettingsClient({ initialBusinessProfile, initialServices
           </TabsTrigger>
           <TabsTrigger value="services" className="data-[state=active]:bg-white/10 data-[state=active]:text-white text-zinc-400 py-2.5">
             <Layers className="h-4 w-4 mr-2" /> Servicios
+          </TabsTrigger>
+          <TabsTrigger value="payments" className="data-[state=active]:bg-white/10 data-[state=active]:text-white text-zinc-400 py-2.5">
+            <CreditCard className="h-4 w-4 mr-2" /> Pagos
           </TabsTrigger>
         </TabsList>
 
@@ -346,6 +360,14 @@ export default function SettingsClient({ initialBusinessProfile, initialServices
             onCreate={handleCreateService}
             onUpdate={handleUpdateService}
             onToggle={handleToggleService}
+          />
+        </TabsContent>
+
+        {/* Pestaña: Pagos — NEW */}
+        <TabsContent value="payments">
+          <PaymentSettingsForm
+            initialData={initialPaymentSettings}
+            onSubmit={handlePaymentSettingsSubmit}
           />
         </TabsContent>
 
