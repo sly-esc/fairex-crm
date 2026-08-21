@@ -31,6 +31,27 @@ export default function ServiceForm({ initialData, onSubmit, onCancel }: Service
   const [category, setCategory] = useState(initialData?.category ?? '');
   const [isActive, setIsActive] = useState(initialData?.is_active ?? true);
 
+  // ─── Payment Terms & Delivery Time ───
+  const initialPaymentTerms = initialData?.metadata?.payment_terms as Record<string, any> | undefined;
+  const initialDeliveryTime = initialData?.metadata?.delivery_time as Record<string, any> | undefined;
+
+  const [paymentTermsType, setPaymentTermsType] = useState<'none' | 'full_upfront' | 'split'>(
+    (initialPaymentTerms?.payment_type as any) ?? 'none'
+  );
+  const [upfrontPercentage, setUpfrontPercentage] = useState<string>(
+    initialPaymentTerms?.upfront_percentage ? String(initialPaymentTerms.upfront_percentage) : '50'
+  );
+  const [balanceDue, setBalanceDue] = useState<string>(
+    initialPaymentTerms?.balance_due ?? 'upon_delivery'
+  );
+
+  const [deliveryTimeValue, setDeliveryTimeValue] = useState<string>(
+    initialDeliveryTime?.value ? String(initialDeliveryTime.value) : ''
+  );
+  const [deliveryTimeUnit, setDeliveryTimeUnit] = useState<string>(
+    initialDeliveryTime?.unit ?? 'hours'
+  );
+
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -41,6 +62,37 @@ export default function ServiceForm({ initialData, onSubmit, onCancel }: Service
     setSaving(true);
     setErrorMsg(null);
 
+    const mergedMetadata: Record<string, any> = { ...(initialData?.metadata ?? {}) };
+
+    if (paymentTermsType === 'none') {
+      delete mergedMetadata.payment_terms;
+    } else if (paymentTermsType === 'full_upfront') {
+      const existingInclude = (initialData?.metadata?.payment_terms as any)?.include_first_required_maintenance;
+      mergedMetadata.payment_terms = { payment_type: 'full_upfront' };
+      if (existingInclude !== undefined) {
+        mergedMetadata.payment_terms.include_first_required_maintenance = existingInclude;
+      }
+    } else if (paymentTermsType === 'split') {
+      const existingInclude = (initialData?.metadata?.payment_terms as any)?.include_first_required_maintenance;
+      mergedMetadata.payment_terms = {
+        payment_type: 'split',
+        upfront_percentage: parseInt(upfrontPercentage, 10) || 50,
+        balance_due: balanceDue
+      };
+      if (existingInclude !== undefined) {
+        mergedMetadata.payment_terms.include_first_required_maintenance = existingInclude;
+      }
+    }
+
+    if (deliveryTimeValue && parseInt(deliveryTimeValue, 10) > 0) {
+      mergedMetadata.delivery_time = {
+        value: parseInt(deliveryTimeValue, 10),
+        unit: deliveryTimeUnit
+      };
+    } else {
+      delete mergedMetadata.delivery_time;
+    }
+
     const payload: ServiceInput = {
       name,
       description: description || null,
@@ -49,8 +101,7 @@ export default function ServiceForm({ initialData, onSubmit, onCancel }: Service
       price_type: priceType,
       category: category || null,
       is_active: isActive,
-      // metadata is intentionally omitted so it is preserved server-side
-      metadata: initialData?.metadata ?? {},
+      metadata: mergedMetadata,
     };
 
     const parsed = ServiceSchema.safeParse(payload);
@@ -134,6 +185,78 @@ export default function ServiceForm({ initialData, onSubmit, onCancel }: Service
               <option value="MXN">MXN</option>
               <option value="USD">USD</option>
             </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="pt-4 pb-2 border-t border-white/10">
+        <h3 className="text-sm font-medium text-white mb-4">Condiciones comerciales</h3>
+        
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-zinc-300">Forma de pago</Label>
+            <select
+              value={paymentTermsType}
+              onChange={(e) => setPaymentTermsType(e.target.value as any)}
+              className="w-full bg-black/50 border border-white/10 rounded-md px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="none">Sin configurar</option>
+              <option value="full_upfront">Pago completo anticipado</option>
+              <option value="split">Pago dividido / anticipo</option>
+            </select>
+          </div>
+
+          {paymentTermsType === 'split' && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Porcentaje para iniciar (%)</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="99"
+                  value={upfrontPercentage}
+                  onChange={(e) => setUpfrontPercentage(e.target.value)}
+                  className={inputClass}
+                  placeholder="50"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-zinc-300">Saldo restante</Label>
+                <select
+                  value={balanceDue}
+                  onChange={(e) => setBalanceDue(e.target.value)}
+                  className="w-full bg-black/50 border border-white/10 rounded-md px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="upon_delivery">Al entregar</option>
+                  <option value="upon_approval">Al aprobar</option>
+                  <option value="net_15">Net 15</option>
+                  <option value="net_30">Net 30</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label className="text-zinc-300">Tiempo normal de entrega</Label>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                min="1"
+                value={deliveryTimeValue}
+                onChange={(e) => setDeliveryTimeValue(e.target.value)}
+                className={`${inputClass} flex-1`}
+                placeholder="Ej: 48"
+              />
+              <select
+                value={deliveryTimeUnit}
+                onChange={(e) => setDeliveryTimeUnit(e.target.value)}
+                className="bg-black/50 border border-white/10 rounded-md px-2 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 w-28"
+              >
+                <option value="hours">Horas</option>
+                <option value="days">Días</option>
+                <option value="weeks">Semanas</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
