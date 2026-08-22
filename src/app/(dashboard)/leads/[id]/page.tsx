@@ -1,7 +1,6 @@
 'use client'
 
 import { useParams } from 'next/navigation'
-import { motion } from 'framer-motion'
 import Link from 'next/link'
 import { ArrowLeft, Phone, Mail, MessageSquare, Calendar, Building, Sparkles, Target, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -10,8 +9,8 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { useAppStore } from '@/lib/store'
-
 import { EmptyState } from '@/components/ui/empty-state'
+import LeadPaymentsCard from '@/components/domain/LeadPaymentsCard'
 
 export default function LeadDetailPage() {
   const params = useParams()
@@ -124,8 +123,11 @@ export default function LeadDetailPage() {
           </Card>
         </div>
 
-        {/* RIGHT COLUMN: Lead Memory */}
+        {/* RIGHT COLUMN: Lead Memory + Payments */}
         <div className="space-y-6">
+          {/* Pagos */}
+          <LeadPaymentsCard leadSessionId={id} />
+
           <Card className="bg-black/40 backdrop-blur-xl border-white/10 border-t-4 border-t-primary shadow-[0_0_30px_color-mix(in_srgb,var(--primary)_10%,transparent)] overflow-hidden">
             <CardHeader className="pb-4 bg-primary/5">
               <div className="flex items-center justify-between">
