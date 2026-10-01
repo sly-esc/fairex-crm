@@ -19,6 +19,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state'
 import { useRouter } from 'next/navigation'
 import { updateLeadEstado, getChatHistory, getLeadMemory } from '@/lib/services/queries'
+import { createClient } from '@/lib/supabase/client'
 
 export default function ConversacionesPage() {
   const [showAI, setShowAI] = useState(true)
@@ -131,14 +132,39 @@ export default function ConversacionesPage() {
     }
   }
 
-  const handleToggleAI = () => {
+  const handleToggleAI = async () => {
+    if (!activeId) return
+
     const newState = !showAI
+    const originalState = showAI
     setShowAI(newState)
-    addToast({
-      title: newState ? 'Agente IA Activado' : 'Agente IA Pausado',
-      description: newState ? 'FAIREX retomará la conversación automáticamente.' : 'Control manual transferido al agente humano.',
-      type: newState ? 'success' : 'warning'
-    })
+
+    try {
+      const mode = newState ? 'ai' : 'manual'
+      const supabase = createClient()
+      const { error } = await supabase
+        .from('lead_memory')
+        .update({ attention_mode: mode })
+        .eq('id', activeId)
+
+      if (error) {
+        throw error
+      }
+
+      addToast({
+        title: newState ? 'Agente IA Activado' : 'Agente IA Pausado',
+        description: newState ? 'FAIREX retomará la conversación automáticamente.' : 'Control manual transferido al agente humano.',
+        type: newState ? 'success' : 'warning'
+      })
+    } catch (err) {
+      console.error('Error updating attention mode:', err)
+      setShowAI(originalState) // Revert state
+      addToast({
+        title: 'Error',
+        description: 'No se pudo actualizar el modo de atención en la base de datos.',
+        type: 'error'
+      })
+    }
   }
 
   return (
