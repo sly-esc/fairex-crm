@@ -213,7 +213,7 @@ export async function getLeadMemory(id: string) {
 
   const { data, error } = await supabase
     .from('lead_memory')
-    .select('score_lead, prioridad, resumen_inteligente, necesidades, objeciones, etapa_venta, numero')
+    .select('score_lead, prioridad, resumen_inteligente, necesidades, objeciones, etapa_venta, numero, attention_mode')
     .eq('id', id)
     .eq('company_id', companyId)
     .single()
@@ -233,6 +233,7 @@ export async function getLeadMemory(id: string) {
     summary: data.resumen_inteligente || '—',
     needs: parseList(data.necesidades),
     objections: parseList(data.objeciones),
-    numero: data.numero
+    numero: data.numero,
+    attention_mode: data.attention_mode || 'ai'
   }
 }

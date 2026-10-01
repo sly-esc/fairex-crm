@@ -43,12 +43,11 @@ export default function ConversacionesPage() {
       const messages = await getChatHistory(conv.name) // conv.name is the numero
       setLocalMessages(prev => ({ ...prev, [id]: messages }))
 
-      // Fetch lead memory for the right panel
-      if (!leadMemory[id]) {
-        const memory = await getLeadMemory(id)
-        if (memory) {
-          setLeadMemory(prev => ({ ...prev, [id]: memory }))
-        }
+      // Fetch lead memory for the right panel and update local state
+      const memory = await getLeadMemory(id)
+      if (memory) {
+        setLeadMemory(prev => ({ ...prev, [id]: memory }))
+        setShowAI(memory.attention_mode !== 'manual')
       }
     } catch (error) {
       console.error('Error loading conversation data:', error)
@@ -63,6 +62,41 @@ export default function ConversacionesPage() {
   // We only want to re-run when the active conversation ID changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, _hasHydrated])
+
+  // Setup Realtime subscription for attention_mode
+  useEffect(() => {
+    if (!activeId) return
+
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`lead_memory_changes_${activeId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'lead_memory',
+          filter: `id=eq.${activeId}`
+        },
+        (payload) => {
+          if (payload.new && payload.new.attention_mode) {
+            setShowAI(payload.new.attention_mode !== 'manual')
+            setLeadMemory(prev => ({
+              ...prev,
+              [activeId]: {
+                ...prev[activeId],
+                attention_mode: payload.new.attention_mode
+              }
+            }))
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [activeId])
 
   const scrollToLatestMessage = useCallback(() => {
     const container = messagesContainerRef.current
