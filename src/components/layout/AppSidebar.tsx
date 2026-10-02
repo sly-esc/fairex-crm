@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, MessageSquare, Users, KanbanSquare, CheckSquare, Bell, Settings, Sparkles, Package } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, Users, KanbanSquare, CheckSquare, Bell, Settings, Sparkles, Package, Briefcase } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { useAppStore } from '@/lib/store'
@@ -28,6 +28,7 @@ export function AppSidebar() {
     { name: 'Tareas', href: '/tasks', icon: CheckSquare },
     { name: 'Alertas', href: '/notifications', icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : undefined },
     { name: 'Inventario', href: '/inventory', icon: Package },
+    { name: 'Servicios', href: '/servicios', icon: Briefcase },
   ]
 
   return (
@@ -39,7 +40,7 @@ export function AppSidebar() {
           {/* Logo container que podrá recibir imágenes personalizadas del cliente */}
           <div className="h-8 w-8 rounded-lg bg-primary/20 flex items-center justify-center border border-primary/30 shadow-[0_0_15px_color-mix(in_srgb,var(--primary)_30%,transparent)] overflow-hidden">
             {branding.logoUrl ? (
-              <img src={branding.logoUrl} alt="Logo" className="w-full h-full object-cover" />
+              <img src={branding.logoUrl} alt="Logo" className="w-8 h-8 object-contain rounded-md bg-transparent" />
             ) : (
               <Sparkles className="h-4 w-4 text-primary" />
             )}

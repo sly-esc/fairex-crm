@@ -97,6 +97,32 @@ export async function updateLeadEstado(id: string, estado: 'ACTIVO' | 'EXCLUIR')
   return data
 }
 
+export async function addContact(numero: string, display_name?: string, manual_context?: string) {
+  const supabase = await createClient()
+  const companyId = await requireUserCompanyId(supabase)
+
+  const { data, error } = await supabase
+    .from('lead_memory')
+    .insert([{
+      company_id: companyId,
+      numero,
+      display_name: display_name || null,
+      manual_context: manual_context || null
+    }])
+    .select()
+    .single()
+
+  if (error) {
+    if (error.code === '23505' || error.message.includes('duplicate') || error.message.includes('unique')) {
+      throw new Error('DUPLICATE_CONTACT')
+    }
+    console.error('Error al agregar contacto:', error)
+    throw new Error(error.message)
+  }
+
+  return data
+}
+
 export async function getLeadsData() {
   const supabase = await createClient()
   const companyId = await requireUserCompanyId(supabase)

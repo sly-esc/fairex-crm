@@ -17,6 +17,7 @@ import PaymentSettingsForm from '@/components/domain/PaymentSettingsForm'
 import { updateBusinessProfile } from '@/actions/dashboard/business-profile'
 import { createService, updateService, toggleServiceStatus } from '@/actions/dashboard/services'
 import { upsertPaymentSettings } from '@/actions/dashboard/payment-settings'
+import { updateBrandingSettings } from '@/actions/dashboard/branding'
 import type { BusinessProfileInput, CompanyServiceRow } from '@/types/business'
 import type { ServiceInput } from '@/types/business'
 import type { PaymentSettingsInput, PaymentSettingsRow } from '@/types/payments'
@@ -37,17 +38,32 @@ export default function SettingsClient({ initialBusinessProfile, initialServices
     n8n: true
   })
 
-  // ─── Existing handlers (unchanged) ───────────────────────────────────────
-  const handleSave = () => {
+  const handleSave = async () => {
     setIsSaving(true)
-    setTimeout(() => {
-      setIsSaving(false)
+    try {
+      const result = await updateBrandingSettings(branding.logoUrl)
+      if (result.success) {
+        addToast({
+          title: 'Ajustes guardados',
+          description: 'La configuración de branding se actualizó correctamente.',
+          type: 'success'
+        })
+      } else {
+        addToast({
+          title: 'Error',
+          description: result.error ?? 'No se pudo guardar la configuración.',
+          type: 'error'
+        })
+      }
+    } catch (error) {
       addToast({
-        title: 'Ajustes guardados',
-        description: 'La configuración se actualizó correctamente.',
-        type: 'success'
+        title: 'Error',
+        description: 'Ocurrió un error inesperado al guardar.',
+        type: 'error'
       })
-    }, 1000)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const handleIntegrationClick = (key: string) => {

@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { Search, Filter, ArrowUpRight } from 'lucide-react'
+import { Search, Filter, ArrowUpRight, Plus } from 'lucide-react'
 import Link from 'next/link'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -25,19 +25,67 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger, SheetFooter } from '@/components/ui/sheet'
+import { Label } from '@/components/ui/label'
+
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import { getStageConfig } from '@/lib/utils/stages'
-import { updateLeadEstado } from '@/lib/services/queries'
+import { updateLeadEstado, addContact, getLeadsData } from '@/lib/services/queries'
 import { useState } from 'react'
 import { EmptyState } from '@/components/ui/empty-state'
 import { UserX } from 'lucide-react'
 
 export default function LeadsPage() {
   const router = useRouter()
-  const { pipelineLeads: leads, conversations, addToast, toggleLeadEstado } = useAppStore()
+  const { pipelineLeads: leads, conversations, addToast, toggleLeadEstado, setLeadsData } = useAppStore()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'Todos' | 'Activos' | 'Excluidos'>('Todos')
+
+  // New Contact State
+  const [isSheetOpen, setIsSheetOpen] = useState(false)
+  const [newContactPhone, setNewContactPhone] = useState('')
+  const [newContactName, setNewContactName] = useState('')
+  const [newContactContext, setNewContactContext] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const handleAddContact = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newContactPhone.trim()) return
+
+    setIsSubmitting(true)
+    try {
+      await addContact(newContactPhone, newContactName, newContactContext)
+      addToast({
+        title: 'Contacto creado exitosamente',
+        type: 'success'
+      })
+      setIsSheetOpen(false)
+      setNewContactPhone('')
+      setNewContactName('')
+      setNewContactContext('')
+      
+      // Refresh list
+      const { leads: freshLeads, conversations: freshConvs } = await getLeadsData()
+      setLeadsData(freshLeads, freshConvs)
+    } catch (err: any) {
+      if (err.message === 'DUPLICATE_CONTACT') {
+        addToast({
+          title: 'Error',
+          description: 'Este número de WhatsApp ya está registrado en esta empresa.',
+          type: 'error'
+        })
+      } else {
+        addToast({
+          title: 'Error',
+          description: 'No se pudo crear el contacto.',
+          type: 'error'
+        })
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   const handleToggleEstado = async (id: string, currentEstado?: string) => {
     const newEstado = currentEstado === 'EXCLUIR' ? 'ACTIVO' : 'EXCLUIR'
@@ -102,6 +150,71 @@ export default function LeadsPage() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
+            <SheetTrigger render={
+              <Button className="bg-primary hover:bg-primary/90 text-white rounded-full px-4" />
+            }>
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo
+            </SheetTrigger>
+            <SheetContent side="right" className="bg-zinc-950 border-white/10 text-zinc-100 sm:max-w-md p-6">
+              <SheetHeader>
+                <SheetTitle className="text-white text-xl">Agregar Nuevo Contacto</SheetTitle>
+                <SheetDescription className="text-zinc-400">
+                  Ingresa los datos del nuevo lead. El agente de IA tomará este contexto comercial inicial.
+                </SheetDescription>
+              </SheetHeader>
+              <form onSubmit={handleAddContact} className="mt-6 space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="phone" className="text-zinc-300">Número de WhatsApp <span className="text-red-500">*</span></Label>
+                  <Input 
+                    id="phone" 
+                    placeholder="+52 1 55 1234 5678" 
+                    value={newContactPhone}
+                    onChange={(e) => setNewContactPhone(e.target.value)}
+                    required
+                    className="bg-black/50 border-white/10 focus-visible:ring-primary/50 text-white"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="name" className="text-zinc-300">Nombre del Contacto</Label>
+                  <Input 
+                    id="name" 
+                    placeholder="Ej. Juan Pérez" 
+                    value={newContactName}
+                    onChange={(e) => setNewContactName(e.target.value)}
+                    className="bg-black/50 border-white/10 focus-visible:ring-primary/50 text-white"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="context" className="text-zinc-300">Contexto Comercial</Label>
+                  <textarea 
+                    id="context"
+                    className="w-full rounded-md border border-white/10 bg-black/50 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 min-h-[120px] resize-none"
+                    placeholder="Ej. Cliente interesado en servicios B2B. Mencionar promoción actual."
+                    value={newContactContext}
+                    onChange={(e) => setNewContactContext(e.target.value)}
+                  />
+                </div>
+                <SheetFooter className="mt-8 gap-2 sm:gap-0">
+                  <Button type="button" variant="ghost" onClick={() => setIsSheetOpen(false)} className="text-zinc-400 hover:text-white">
+                    Cancelar
+                  </Button>
+                  <Button type="submit" disabled={isSubmitting} className="bg-primary hover:bg-primary/90 text-white min-w-[140px]">
+                    {isSubmitting ? (
+                      <>
+                        <span className="animate-spin h-4 w-4 border-2 border-white/20 border-t-white rounded-full mr-2" />
+                        Guardando...
+                      </>
+                    ) : (
+                      'Agregar Contacto'
+                    )}
+                  </Button>
+                </SheetFooter>
+              </form>
+            </SheetContent>
+          </Sheet>
 
         </div>
       </div>
