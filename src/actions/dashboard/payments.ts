@@ -110,6 +110,31 @@ export async function registerPayment(input: RegisterPaymentInput): Promise<{
       return { success: false, error: 'Error al registrar el pago' };
     }
 
+    // Inyectar contexto al LLM en lead_memory (actualización desacoplada)
+    try {
+      const sessionId = parsed.data.lead_session_id.trim();
+      const { data: leadData, error: leadError } = await supabase
+        .from('lead_memory')
+        .select('manual_context')
+        .eq('id', sessionId)
+        .single();
+
+      if (!leadError && leadData) {
+        const paymentMsg = `Pago confirmado por humano: ${parsed.data.concept} de ${parsed.data.amount} ${parsed.data.currency}. Tratar como CLIENTE y pedir requisitos para iniciar.`;
+        const newContext = leadData.manual_context
+          ? `${leadData.manual_context}\n${paymentMsg}`
+          : paymentMsg;
+
+        await supabase
+          .from('lead_memory')
+          .update({ manual_context: newContext })
+          .eq('id', sessionId);
+      }
+    } catch (e) {
+      console.error('[registerPayment] Error actualizando lead_memory:', e);
+      // No bloqueamos el retorno exitoso si falla la actualización del contexto
+    }
+
     return { success: true, data: data as PaymentRow };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error inesperado';
