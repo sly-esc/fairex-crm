@@ -33,7 +33,7 @@ export const INTEGRATION_ALLOWLIST: Record<WizardIntegrationKey, {
     provider: 'ycloud',
     displayName: 'YCloud: WhatsApp API',
     connectionType: 'webhook',
-    credentialKey: null,
+    credentialKey: 'api_key',
     requiresAccountId: true,
   }
 };

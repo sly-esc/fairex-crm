@@ -63,6 +63,8 @@ export default function OnboardingWizard() {
     whatsapp_token: '',
     whatsapp_has_credentials: false,
     ycloud_id: '',
+    ycloud_api_key: '',
+    ycloud_has_credentials: false,
     facebook_page_id: '',
     facebook_token: '',
     facebook_has_credentials: false,
@@ -127,6 +129,7 @@ export default function OnboardingWizard() {
                 updated.whatsapp_has_credentials = int.has_credentials || false;
               } else if (int.integration_key === 'ycloud_whatsapp') {
                 updated.ycloud_id = int.provider_account_id || '';
+                updated.ycloud_has_credentials = int.has_credentials || false;
               } else if (int.integration_key === 'facebook_page') {
                 updated.facebook_page_id = int.provider_account_id || '';
                 updated.facebook_has_credentials = int.has_credentials || false;
@@ -300,10 +303,10 @@ export default function OnboardingWizard() {
         if (!res.success) throw new Error(`WhatsApp: ${res.error}`);
       }
       
-      if (integrations.ycloud_id) {
+      if (integrations.ycloud_id || integrations.ycloud_api_key || integrations.ycloud_has_credentials) {
         const normalizedYcloudId = String(integrations.ycloud_id).replace(/\D/g, '');
         if (!normalizedYcloudId) throw new Error(`YCloud: Número receptor inválido`);
-        const res = await saveIntegration(Number(companyId), 'ycloud_whatsapp', normalizedYcloudId, '');
+        const res = await saveIntegration(Number(companyId), 'ycloud_whatsapp', normalizedYcloudId, integrations.ycloud_api_key);
         if (!res.success) throw new Error(`YCloud: ${res.error}`);
       }
       
@@ -584,10 +587,17 @@ export default function OnboardingWizard() {
               <div className="p-5 bg-black/20 border border-white/10 rounded-xl">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-md font-medium text-emerald-400 flex items-center gap-2">YCloud: WhatsApp API</h3>
+                  {integrations.ycloud_has_credentials && <span className="px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Configurada</span>}
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Número Receptor de WhatsApp</label>
-                  <input type="text" autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off" value={integrations.ycloud_id} onChange={e => setIntegrations({...integrations, ycloud_id: e.target.value})} placeholder="Ej: 521234567890" className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-500 mb-1">Número Receptor de WhatsApp</label>
+                    <input type="text" autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off" value={integrations.ycloud_id} onChange={e => setIntegrations({...integrations, ycloud_id: e.target.value})} placeholder="Ej: 521234567890" className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-500 mb-1">API Key</label>
+                    <input type="password" autoComplete="new-password" spellCheck={false} autoCapitalize="none" autoCorrect="off" value={integrations.ycloud_api_key} onChange={e => setIntegrations({...integrations, ycloud_api_key: e.target.value})} placeholder={integrations.ycloud_has_credentials ? "•••••• (Guardado)" : ""} className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                  </div>
                 </div>
               </div>
 
