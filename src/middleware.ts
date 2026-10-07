@@ -4,11 +4,7 @@ import { updateSession } from '@/lib/supabase/middleware'
 export async function middleware(request: NextRequest) {
   // /api/n8n/* endpoints usan autenticación propia mediante x-n8n-secret.
   // n8n no tiene cookie de sesión de Supabase — no debe ser redirigido a /login.
-  if (
-    request.nextUrl.pathname === '/api/n8n/context' ||
-    request.nextUrl.pathname === '/api/n8n/inventory-search' ||
-    request.nextUrl.pathname === '/api/n8n/payment-info'
-  ) {
+  if (request.nextUrl.pathname.startsWith('/api/n8n/')) {
     return NextResponse.next();
   }
 
